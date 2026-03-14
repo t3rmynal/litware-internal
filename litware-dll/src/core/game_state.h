@@ -1,7 +1,7 @@
 #pragma once
 #include <cstdint>
 
-// Game state snapshot - populated each frame by render_hook for CEF/UI binding
+// game state, filled each frame
 struct GameState {
     bool bombActive = false;
     int bombSite = -1;

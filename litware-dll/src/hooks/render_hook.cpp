@@ -1,4 +1,3 @@
-// LitWare render_hook.cpp - Full rewrite 2026-03-13
 #include "render_hook.h"
 #include "Fonts.h"
 #include "res/font.h"
@@ -38,10 +37,6 @@
 #pragma comment(lib, "Psapi.lib")
 #pragma comment(lib, "winmm.lib")
 
-// CEF support - comment out if CEF not available
-// #pragma comment(lib, "libcef.lib")
-// #pragma comment(lib, "libcef_dll_wrapper.lib")
-
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
 extern HMODULE g_thisModule;
 
@@ -63,7 +58,7 @@ static GetWorldFovFn g_origGetWorldFov = nullptr;
 static FirstPersonLegsFn g_origFirstPersonLegs = nullptr;
 static bool g_sceneHooksReady = false;
 static bool g_clientHooksReady = false;
-static bool g_safeMode = false;  // skip game reads after overlay crash
+static bool g_safeMode = false;
 static bool g_drawSceneHooked = false;
 static bool g_drawSkyHooked = false;
 static bool g_worldFovHooked = false;
@@ -92,7 +87,6 @@ static uintptr_t g_client = 0;
 static uintptr_t g_engine2 = 0;
 static Vec3 g_localOrigin{};
 
-// Feature toggles
 static bool g_espEnabled = true;
 static bool g_espOnlyVis = false;
 static int g_espBoxStyle = 0;
@@ -109,7 +103,7 @@ static float g_espHealthGradientCol1[4]{0.2f,0.92f,0.51f,1.f};  // green (full)
 static float g_espHealthGradientCol2[4]{1.f,0.27f,0.27f,1.f};   // red (empty)
 static bool g_espDist = true;
 static float g_espMaxDist = 100.f;
-static bool g_espSkeleton = false;  // Removed from menu
+static bool g_espSkeleton = false;
 static bool g_espLines = false;
 static int g_espLineAnchor = 1;  // 0=Top 1=Middle 2=Bottom
 static bool g_espOof = false;       // Offscreen arrows (from Pidoraise/Weave)
@@ -145,13 +139,12 @@ static bool g_chamsEnabled = false;
 static bool g_chamsEnemyOnly = true;
 static bool g_chamsIgnoreZ = false;  // invisible/occluded chams (wall color)
 static int g_chamsMaterial = 0;      // 0=white 1=illuminate 2=latex 3=glow 4=glow2 5=metallic
-    static float g_chamsEnemyCol[4]{1.f,0.2f,0.2f,1.f};
+static float g_chamsEnemyCol[4]{1.f,0.2f,0.2f,1.f};
 static float g_chamsTeamCol[4]{0.2f,0.5f,1.f,1.f};
 static float g_chamsIgnoreZCol[4]{0.4f,0.9f,0.5f,0.8f};
 static bool g_chamsScene = true;     // scene-object chams (model tint) via draw hook
 static bool g_weaponChamsEnabled = false;
 static float g_weaponChamsCol[4]{1.f,0.88f,0.35f,1.f};
-#define g_chamsEnemy g_chamsEnemyOnly  // backward compat
 static bool g_aimbotEnabled = false;
 static int g_aimbotKey = VK_LBUTTON;  // LMB default
 static float g_aimbotFov = 5.f;
@@ -175,7 +168,6 @@ static bool g_tbJustFired = false;  // Release attack on next frame after firing
 static bool g_dtEnabled = false;
 static int g_dtKey = 0;
 static bool g_bhopEnabled = false;
-static bool g_bhopAutoAccel = false;  // Removed - unused
 static bool g_strafeEnabled = false;
 static int g_strafeKey = 0;
 static bool g_antiAimEnabled = false;
@@ -254,16 +246,6 @@ static float g_menuAnim = 0.f;
 static float g_menuAnimSpeed = 12.f;
 static DWORD g_telegramNoteStart = 0;  // Telegram notice: 5s on load
 
-// HTML Menu variables (CEF integration pending)
-static bool g_htmlMenuReady = false;
-static const char* g_htmlMenuPath = "res/menu.html";
-
-// CEF variables - commented out until CEF is properly set up
-// static ID3D11Texture2D* g_cefTexture = nullptr;
-// static ID3D11ShaderResourceView* g_cefSRV = nullptr;
-// static CefRefPtr<CefBrowser> g_cefBrowser = nullptr;
-// static bool g_cefInitialized = false;
-
 struct ThemeColors {
     ImU32 bg, surf, surf2, border;
     ImU32 text, textDim;
@@ -277,7 +259,7 @@ static ThemeColors GetThemeColors() {
     float acc_r = g_accentColor[0], acc_g = g_accentColor[1], acc_b = g_accentColor[2];
     float pulseIntensity = 0.8f + sinf((float)ImGui::GetTime() * 1.5f) * 0.2f;
 
-    if(g_menuTheme == 1) { // Glassmorphism - enhanced with dynamic glow
+    if(g_menuTheme == 1) {
         c.bg = IM_COL32(12, 12, 22, 210);
         c.surf = IM_COL32(22, 22, 38, 195);
         c.surf2 = IM_COL32(32, 32, 52, 185);
@@ -288,7 +270,7 @@ static ThemeColors GetThemeColors() {
         c.toggleFill = IM_COL32((int)(acc_r*255),(int)(acc_g*255),(int)(acc_b*255),240);
         c.headerBg = IM_COL32(22, 22, 38, 220);
         c.round = 18.f;
-    } else if(g_menuTheme == 2) { // Neumorphism - refined embossing
+    } else if(g_menuTheme == 2) {
         c.bg = IM_COL32(48, 53, 63, 255);
         c.surf = IM_COL32(58, 63, 73, 255);
         c.surf2 = IM_COL32(53, 58, 68, 255);
@@ -299,7 +281,7 @@ static ThemeColors GetThemeColors() {
         c.toggleFill = IM_COL32((int)(acc_r*230),(int)(acc_g*230),(int)(acc_b*230),220);
         c.headerBg = IM_COL32(48, 53, 63, 255);
         c.round = 14.f;
-    } else { // Dark Pro (default) - enhanced with accent glow
+    } else {
         c.bg = IM_COL32(10, 10, 14, 255);
         c.surf = IM_COL32(18, 18, 26, 255);
         c.surf2 = IM_COL32(24, 24, 34, 255);
@@ -329,7 +311,6 @@ struct PidoraisePalette {
 
 static PidoraisePalette g_pido;
 
-// Forward declarations for helpers used before their definitions
 static inline float Clampf(float v, float lo, float hi);
 template<typename T> static inline T Rd(uintptr_t addr);
 static void DrawFilledEllipse(ImDrawList* dl, const ImVec2& center, float rx, float ry, ImU32 col, int segments);
@@ -2441,31 +2422,6 @@ static bool StyledSliderFloat(const char* label, const char* format, float* v, f
     return changed;
 }
 
-// Enhanced slider with smooth track and theme colors + glow effect (old version kept for compatibility)
-[[maybe_unused]] static bool StyledSliderFloat_Old(const char* label, float* v, float v_min, float v_max, const char* format = "%.1f") {
-    (void)GetThemeColors();
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.f, 6.f));
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.f);
-    ImGui::PushStyleVar(ImGuiStyleVar_GrabRounding, 8.f);
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.5f);
-
-    float glowIntensity = 0.5f + sinf((float)ImGui::GetTime() * 2.f) * 0.3f;
-    ImVec4 glowCol(g_accentColor[0]*glowIntensity, g_accentColor[1]*glowIntensity, g_accentColor[2]*glowIntensity, 0.6f);
-
-    ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(40.f/255.f, 40.f/255.f, 55.f/255.f, 160.f/255.f));
-    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(50.f/255.f, 50.f/255.f, 70.f/255.f, 200.f/255.f));
-    ImGui::PushStyleColor(ImGuiCol_SliderGrab, ImVec4(g_accentColor[0], g_accentColor[1], g_accentColor[2], 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_SliderGrabActive, ImVec4(g_accentColor[0]*1.2f, g_accentColor[1]*1.2f, g_accentColor[2]*1.2f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_Border, glowCol);
-
-    bool changed = ImGui::SliderFloat(label, v, v_min, v_max, format);
-
-    ImGui::PopStyleColor(5);
-    ImGui::PopStyleVar(4);
-
-    return changed;
-}
-
 // Enhanced slider for integers with glow effect
 static bool StyledSliderInt(const char* label, int* v, int v_min, int v_max, const char* format = "%d") {
     ThemeColors theme = GetThemeColors();
@@ -2952,302 +2908,6 @@ static void DrawFakeESPPreview(const ImVec2& size, int pos){
     drawBox({c.x+60.f,c.y}, eCol);
     drawBox({c.x,c.y+10.f}, tCol);
     ImGui::EndChild();
-}
-
-[[maybe_unused]] static void DrawMenu_Old(){
-    if(!g_menuOpen)return;
-
-    ImGuiIO&io=ImGui::GetIO();
-    g_toggleIdx = 0;
-
-    // ???????? ????? (Pidoraise style)
-    for(int i=0;i<6;++i){
-        g_tabAnim[i] = LerpF(g_tabAnim[i], (g_activeTab==i)?1.f:0.f, io.DeltaTime*12.f);
-    }
-
-    // ??????? ???? ??? ? Pidoraise (c::background::size)
-    const float menuW = 800.f;
-    const float menuH = 520.f;
-    float sw=(float)g_esp_screen_w, sh=(float)g_esp_screen_h;
-    if(sw<100.f)sw=1920.f; if(sh<100.f)sh=1080.f;
-
-    ImGui::SetNextWindowSize(ImVec2(menuW,menuH), ImGuiCond_Always);
-    ImGui::SetNextWindowPos(ImVec2((sw-menuW)*0.5f,(sh-menuH)*0.5f), ImGuiCond_Always);
-
-    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoCollapse|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoSavedSettings;
-
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0,0));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.f);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(0,0,0,0));
-
-    if(!ImGui::Begin("##menu",nullptr,flags)){
-        ImGui::End();
-        ImGui::PopStyleColor();
-        ImGui::PopStyleVar(3);
-        return;
-    }
-
-    if(font::lexend_bold) ImGui::PushFont(font::lexend_bold);
-
-    ImDrawList*dl=ImGui::GetWindowDrawList();
-    ImVec2 pos=ImGui::GetWindowPos();
-    ImVec2 size=ImGui::GetWindowSize();
-
-    // ????? ???? ??? ? Pidoraise (c::background, c::elements, c::tab)
-    ImU32 bgDark = IM_COL32(11,11,11,255);      // c::background::filling
-    ImU32 bgLighter = IM_COL32(14,14,15,255);   // c::tab::border
-    ImU32 accent = IM_COL32(112,110,215,255);   // c::accent Pidoraise
-    ImU32 text = IM_COL32(255,255,255,255);    // c::elements::text_active
-    ImU32 textDim = IM_COL32(125,125,125,255);  // c::elements::text_light
-    ImU32 border = IM_COL32(24,26,36,255);      // c::background::stroke
-
-    // ??????? ?????? ???? ??? ? Pidoraise (sidebar 200px)
-    float sidebarW = 200.f;
-    float headerH = 35.f;
-    float footerH = 25.f;
-    float contentW = size.x - sidebarW;
-    float contentH = size.y - headerH - footerH;
-
-    // ??? ? ??????? (Pidoraise c::background::rounding = 6)
-    const float menuRounding = 6.f;
-    dl->AddRectFilled(pos, {pos.x+size.x, pos.y+size.y}, bgDark, menuRounding);
-
-    // Header
-    dl->AddRectFilled(pos, {pos.x+size.x, pos.y+headerH}, bgLighter, menuRounding, ImDrawFlags_RoundCornersTop);
-    dl->AddRectFilled(pos, {pos.x+size.x, pos.y+headerH}, accent, 0.f, ImDrawFlags_None);
-
-    // Sidebar
-    dl->AddRectFilled({pos.x, pos.y+headerH}, {pos.x+sidebarW, pos.y+size.y}, bgLighter, 0.f);
-
-    // ???????????
-    dl->AddLine({pos.x+sidebarW, pos.y+headerH}, {pos.x+sidebarW, pos.y+size.y}, border, 1.f);
-
-    // Logo with glow
-    float logoGlow = 0.7f + sinf((float)ImGui::GetTime()*2.f)*0.15f;
-    ImU32 logoGlowCol = IM_COL32((int)(200*logoGlow),(int)(100*logoGlow),(int)(200*logoGlow),120);
-    ImFont* menuFont = font::lexend_bold ? font::lexend_bold : ImGui::GetFont();
-    for(int g=2;g>=1;g--) dl->AddText(menuFont, 17.f, {pos.x+10.f+(float)g,pos.y+8.f+(float)g}, logoGlowCol, "LITWARE");
-    dl->AddText(menuFont, 17.f, {pos.x+10.f, pos.y+8.f}, text, "LITWARE");
-
-    // Sidebar navigation - remove default blue selection
-    ImGui::SetCursorPos({2.f, headerH+8.f});
-    ImGui::BeginChild("##sidebar", ImVec2(sidebarW-4.f, contentH-16.f), false);
-    ImGui::PushStyleVar(ImGuiStyleVar_SelectableTextAlign, ImVec2(0.1f,0.5f));
-    ImGui::PushStyleColor(ImGuiCol_Header, IM_COL32(0,0,0,0));
-    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, IM_COL32(40,40,50,80));
-    ImGui::PushStyleColor(ImGuiCol_HeaderActive, IM_COL32(0,0,0,0));
-
-    // Pidoraise tab icons: c=aimbot, b=antiaim, f=visuals, b=chams, o=skins, e=misc
-    static const char tabIcons[] = { 'c', 'b', 'f', 'b', 'o', 'e' };
-    ImDrawList* childDl = ImGui::GetWindowDrawList();
-
-    auto drawNavBtn = [&](const char*label, int idx) {
-        bool active = (g_activeTab==idx);
-        ImVec2 btnPos = ImGui::GetCursorScreenPos();
-        char selId[16];
-        snprintf(selId, sizeof(selId), "##tab%d", idx);
-
-        if(ImGui::Selectable(selId, active, ImGuiSelectableFlags_DontClosePopups, ImVec2(0,28))) {
-            g_activeTab = idx;
-        }
-        if(active) {
-            dl->AddRectFilled({pos.x+2.f, btnPos.y}, {pos.x+6.f, btnPos.y+28.f}, accent, 0.f);
-        }
-        // Draw icon (icomoon) + label (lexend_bold) over the Selectable
-        ImU32 txtCol = active ? text : textDim;
-        float iconX = btnPos.x + 12.f;
-        float textX = btnPos.x + 36.f;
-        float centerY = btnPos.y + 14.f;
-        if(font::icomoon) {
-            const char iconBuf[2] = { tabIcons[idx], '\0' };
-            ImVec2 iconSize = font::icomoon->CalcTextSizeA(18.f, FLT_MAX, 0.f, iconBuf);
-            childDl->AddText(font::icomoon, 18.f, {iconX, centerY - iconSize.y*0.5f}, txtCol, iconBuf);
-        }
-        ImFont* lf = font::lexend_bold ? font::lexend_bold : ImGui::GetFont();
-        childDl->AddText(lf, 14.f, {textX, centerY - lf->FontSize*0.5f}, txtCol, label);
-    };
-
-    drawNavBtn("Aimbot", 0);
-    drawNavBtn("World", 1);
-    drawNavBtn("Visuals", 2);
-    drawNavBtn("Chams", 3);
-    drawNavBtn("Skins", 4);
-    drawNavBtn("Misc", 5);
-
-    ImGui::PopStyleColor(3);
-    ImGui::PopStyleVar();
-    ImGui::EndChild();
-
-    // Content area
-    ImGui::SetCursorPos({sidebarW+8.f, headerH+8.f});
-    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, g_tabAnim[g_activeTab]);
-    ImGui::BeginChild("##content", ImVec2(contentW-16.f, contentH-16.f), false);
-
-    if(g_activeTab==0){
-        ImGui::Text("Ragebot");ImGui::Separator();
-        ToggleSwitch("Rage",&g_aimbotEnabled,g_toggleIdx++);
-        ImGui::Text("Triggerbot");ImGui::Separator();
-        ToggleSwitch("Enable##tb",&g_tbEnabled,g_toggleIdx++);
-        StyledSliderInt("Delay (ms)",&g_tbDelay,0,300);
-
-        ImGui::Spacing();
-        ImGui::Text("Recoil Control");ImGui::Separator();
-        ToggleSwitch("Enable##rcs",&g_rcsEnabled,g_toggleIdx++);
-        StyledSliderFloat("X axis","%.2f",&g_rcsX,0.f,2.f);
-        StyledSliderFloat("Y axis","%.2f",&g_rcsY,0.f,2.f);
-
-        ImGui::Spacing();
-        ImGui::Text("Aimbot");ImGui::Separator();
-        ToggleSwitch("Enable##aim",&g_aimbotEnabled,g_toggleIdx++);
-        StyledSliderFloat("FOV","%.1f",&g_aimbotFov,1.f,30.f);
-        StyledSliderFloat("Smooth","%.1f",&g_aimbotSmooth,1.f,20.f);
-        const char* bones[]={"Head","Neck","Chest","Multi"};
-        StyledCombo("Bone",&g_aimbotBone,bones,IM_ARRAYSIZE(bones));
-        KeyBindWidget("Aimbot key",&g_aimbotKey);
-        ToggleSwitch("Backtrack",&g_backtrackEnabled,g_toggleIdx++);
-        StyledSliderInt("Ms",&g_backtrackMs,50,400);
-        ImGui::Spacing();
-        ImGui::Text("Legitbot");ImGui::Separator();
-        ToggleSwitch("FOV circle",&g_fovCircleEnabled,g_toggleIdx++);
-        StyledSliderFloat("Aim FOV","%.1f",&g_aimbotFov,1.f,90.f);
-        StyledSliderFloat("Smoothing","%.1f",&g_aimbotSmooth,1.f,30.f);
-        KeyBindWidget("Aimbot key",&g_aimbotKey);
-
-    }else if(g_activeTab==1){
-        ImGui::Text("World");ImGui::Separator();
-        ToggleSwitch("Sky color",&g_skyColorEnabled,g_toggleIdx++);
-        if(g_skyColorEnabled) StyledColorEdit4("Sky##col",g_skyColor,ImGuiColorEditFlags_NoInputs);
-        ImGui::Spacing();
-        ImGui::Text("Particles");ImGui::Separator();
-        ToggleSwitch("Snow",&g_snowEnabled,g_toggleIdx++);
-        if(g_snowEnabled) StyledSliderInt("Density",&g_snowDensity,0,2);
-        ToggleSwitch("Sakura",&g_sakuraEnabled,g_toggleIdx++);
-        if(g_sakuraEnabled) StyledColorEdit4("Sakura##col",g_sakuraCol,ImGuiColorEditFlags_NoInputs);
-        ToggleSwitch("Stars",&g_starsEnabled,g_toggleIdx++);
-        ToggleSwitch("3D world",&g_particlesWorld,g_toggleIdx++);
-        if(g_particlesWorld){
-            StyledSliderFloat("Radius","%.0f",&g_particlesWorldRadius,200.f,2000.f);
-            StyledSliderFloat("Height","%.0f",&g_particlesWorldHeight,100.f,1200.f);
-            StyledSliderFloat("Floor","%.0f",&g_particlesWorldFloor,-200.f,200.f);
-            StyledSliderFloat("Wind","%.0f",&g_particlesWind,0.f,60.f);
-            StyledSliderFloat("Depth fade","%.4f",&g_particlesDepthFade,0.0005f,0.01f);
-        }
-    }else if(g_activeTab==2){
-        ImGui::Text("ESP");ImGui::Separator();
-        const char* previewPosItems[]={"Right","Left","Top","Bottom"};
-        StyledCombo("Preview pos",&g_espPreviewPos,previewPosItems,IM_ARRAYSIZE(previewPosItems));
-        bool prevRight=(g_espPreviewPos==0), prevLeft=(g_espPreviewPos==1), prevTop=(g_espPreviewPos==2), prevBottom=(g_espPreviewPos==3);
-        if(prevLeft||prevTop) {
-            DrawFakeESPPreview(ImVec2(contentW*0.5f-8.f, prevTop?80.f:contentH-16.f), g_espPreviewPos);
-            if(prevTop) ImGui::Spacing();
-        }
-        ImGui::BeginGroup();
-        ToggleSwitch("Enable##esp",&g_espEnabled,g_toggleIdx++);
-        if(g_safeMode){ ImGui::SameLine(); if(ImGui::Button("Retry##esp")) g_safeMode=false; }
-        ToggleSwitch("Only visible",&g_espOnlyVis,g_toggleIdx++);
-        const char* boxItems[]={"Corner","Full","Corner Fill","Dark Pro","Outline","Coal","Outline Coal"};
-        StyledCombo("Box##esp",&g_espBoxStyle,boxItems,IM_ARRAYSIZE(boxItems));
-        StyledColorEdit4("Enemy##col",g_espEnemyCol,ImGuiColorEditFlags_NoInputs);
-        ToggleSwitch("Name##esp",&g_espName,g_toggleIdx++);
-        ToggleSwitch("Health##esp",&g_espHealth,g_toggleIdx++);
-        ToggleSwitch("Distance##esp",&g_espDist,g_toggleIdx++);
-        ToggleSwitch("Head dot##esp",&g_espHeadDot,g_toggleIdx++);
-        ToggleSwitch("OOF arrows##esp",&g_espOof,g_toggleIdx++);
-        ToggleSwitch("Skeleton##esp",&g_espSkeleton,g_toggleIdx++);
-        ToggleSwitch("Lines##esp",&g_espLines,g_toggleIdx++);
-        ToggleSwitch("Weapon##esp",&g_espWeapon,g_toggleIdx++);
-        ToggleSwitch("Weapon icon##esp",&g_espWeaponIcon,g_toggleIdx++);
-        ToggleSwitch("Ammo bar##esp",&g_espAmmo,g_toggleIdx++);
-        ToggleSwitch("Money##esp",&g_espMoney,g_toggleIdx++);
-        StyledSliderFloat("Box thick","%.1f",&g_espBoxThick,0.5f,4.f);
-        ImGui::EndGroup();
-        if(prevRight){ ImGui::SameLine(contentW*0.55f); DrawFakeESPPreview(ImVec2(contentW*0.45f-12.f,contentH-16.f), 0); }
-        else if(prevLeft) ImGui::SameLine(contentW*0.52f);
-        else if(prevTop){ }
-        if(prevBottom){ DrawFakeESPPreview(ImVec2(contentW-16.f,80.f), 3); ImGui::Spacing(); }
-        ImGui::Spacing();
-        ImGui::Text("Effects");ImGui::Separator();
-        ToggleSwitch("No flash",&g_noFlash,g_toggleIdx++);
-        ToggleSwitch("No smoke",&g_noSmoke,g_toggleIdx++);
-        ToggleSwitch("Glow",&g_glowEnabled,g_toggleIdx++);
-        ToggleSwitch("Chams",&g_chamsEnabled,g_toggleIdx++);
-        if(g_chamsEnabled){StyledColorEdit4("Chams enemy##col",g_chamsEnemyCol,ImGuiColorEditFlags_NoInputs);StyledColorEdit4("Chams team##col",g_chamsTeamCol,ImGuiColorEditFlags_NoInputs);}
-        ToggleSwitch("Sky color",&g_skyColorEnabled,g_toggleIdx++);
-        if(g_skyColorEnabled) StyledColorEdit4("Sky##col",g_skyColor,ImGuiColorEditFlags_NoInputs);
-    }else if(g_activeTab==3){
-        ImGui::Text("Chams (Pidoraise style)");ImGui::Separator();
-        ToggleSwitch("Enable##chams",&g_chamsEnabled,g_toggleIdx++);
-        if(g_chamsEnabled){
-            ToggleSwitch("Enemy only##chams",&g_chamsEnemyOnly,g_toggleIdx++);
-            const char* chamsMats[]={"White","Illuminate","Latex","Glow","Glow2","Metallic"};
-            StyledCombo("Material##chams",&g_chamsMaterial,chamsMats,IM_ARRAYSIZE(chamsMats));
-            ToggleSwitch("Invisible (XQZ)",&g_chamsIgnoreZ,g_toggleIdx++);
-            StyledColorEdit4("Visible color",g_chamsEnemyCol,ImGuiColorEditFlags_NoInputs);
-            if(g_chamsIgnoreZ) StyledColorEdit4("Invisible color",g_chamsIgnoreZCol,ImGuiColorEditFlags_NoInputs);
-            StyledColorEdit4("Team color",g_chamsTeamCol,ImGuiColorEditFlags_NoInputs);
-        }
-        ImGui::Spacing();
-        ImGui::Text("Glow");ImGui::Separator();
-        ToggleSwitch("Enable##glow",&g_glowEnabled,g_toggleIdx++);
-        if(g_glowEnabled){
-            StyledColorEdit4("Enemy##glow",g_glowEnemyCol,ImGuiColorEditFlags_NoInputs);
-            StyledColorEdit4("Team##glow",g_glowTeamCol,ImGuiColorEditFlags_NoInputs);
-        }
-    }else if(g_activeTab==4){
-        ImGui::Text("Skins");ImGui::Separator();
-        ImGui::TextDisabled("Coming soon...");
-    }else if(g_activeTab==4){
-        ImGui::Text("Movement");ImGui::Separator();
-        ToggleSwitch("Bunny hop",&g_bhopEnabled,g_toggleIdx++);
-        if(g_bhopEnabled) ToggleSwitch("Auto accel (Fatality)",&g_bhopAutoAccel,g_toggleIdx++);
-        ToggleSwitch("Strafe helper",&g_strafeEnabled,g_toggleIdx++);
-        ToggleSwitch("Anti-aim",&g_antiAimEnabled,g_toggleIdx++);
-        if(g_antiAimEnabled){
-            const char* aaTypes[]={"Spin","Desync","Jitter"};
-            StyledCombo("Anti-aim type##aa",&g_antiAimType,aaTypes,IM_ARRAYSIZE(aaTypes));
-            StyledSliderFloat("Anti-aim speed","%.0f",&g_antiAimSpeed,10.f,360.f);
-        }
-
-        ImGui::Spacing();
-        ImGui::Text("Radar");ImGui::Separator();
-        ToggleSwitch("In-game radar",&g_radarIngame,g_toggleIdx++);
-        ImGui::Spacing();
-        ImGui::Text("HUD");ImGui::Separator();
-        ToggleSwitch("Watermark",&g_watermarkEnabled,g_toggleIdx++);
-        ToggleSwitch("Spectator list",&g_spectatorListEnabled,g_toggleIdx++);
-        ToggleSwitch("Keybinds",&g_keybindsEnabled,g_toggleIdx++);
-        ImGui::Spacing();
-        ImGui::Text("View");ImGui::Separator();
-        ToggleSwitch("FOV changer",&g_fovEnabled,g_toggleIdx++);
-        StyledSliderFloat("FOV","%.0f",&g_fovValue,70.f,130.f);
-        ToggleSwitch("Third person",&g_thirdPerson,g_toggleIdx++);
-        StyledSliderFloat("3P Dist","%.0f",&g_tpDist,50.f,200.f);
-        ImGui::Text("Config");ImGui::Separator();
-        StyledColorEdit4("Accent color",g_accentColor,ImGuiColorEditFlags_NoInputs);
-        StyledSliderFloat("Esp scale","%.2f",&g_espScale,0.7f,1.5f);
-        StyledSliderFloat("Menu scale","%.2f",&g_uiScale,0.85f,1.6f);
-        ImGui::Spacing();
-        ImGui::InputText("##cfgname",g_configName,sizeof(g_configName),ImGuiInputTextFlags_AutoSelectAll);
-        if(ImGui::Button("Save##cfg")) SaveConfig(g_configName);
-        ImGui::SameLine();
-        if(ImGui::Button("Load##cfg")) LoadConfig(g_configName);
-        ImGui::SameLine();
-        if(ImGui::Button("Reset##cfg")) ApplyDefaults();
-    }
-
-    ImGui::EndChild();
-    ImGui::PopStyleVar();
-
-    // Footer
-    dl->AddRectFilled({pos.x, pos.y+size.y-footerH}, {pos.x+size.x, pos.y+size.y}, bgDark, 0.f);
-    dl->AddLine({pos.x, pos.y+size.y-footerH}, {pos.x+size.x, pos.y+size.y-footerH}, border, 1.f);
-    dl->AddText(menuFont, 14.f, {pos.x+10.f, pos.y+size.y-footerH+5.f}, textDim, "LitWare | INSERT: toggle | END: unload");
-
-    if(font::lexend_bold) ImGui::PopFont();
-    ImGui::End();
-    ImGui::PopStyleColor();
-    ImGui::PopStyleVar(3);
 }
 
 static void DrawMenu(){

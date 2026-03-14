@@ -11,39 +11,6 @@
 
 ---
 
-## GitHub Setup
-
-1. **Initialize Git** (if not already):
-   ```bash
-   git init
-   ```
-
-2. **Add files and commit**:
-   ```bash
-   git add .
-   git commit -m "Initial commit: LitWare CS2 Internal"
-   ```
-
-3. **Create a new repository** on GitHub (e.g. `cs2-litware-internal`) — do **not** add a README or .gitignore.
-
-4. **Push to GitHub**:
-   ```bash
-   git remote add origin https://github.com/YOUR_USERNAME/cs2-litware-internal.git
-   git branch -M main
-   git push -u origin main
-   ```
-
-5. **Private repo** recommended — public cheat repos can attract attention.
-
-| | |
-|---|---|
-| **Platform** | Windows x64 |
-| **Engine** | Source 2 |
-| **Build** | Visual Studio 2022 |
-| **Dependencies** | Steam (gameoverlayrenderer64.dll), ImGui, MinHook |
-
----
-
 ## Features
 
 | Category | Features |

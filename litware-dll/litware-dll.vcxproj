@@ -41,7 +41,7 @@
       <WarningLevel>Level4</WarningLevel>
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_WINDOWS;_USRDLL;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)src;$(ProjectDir)external\imgui;$(ProjectDir)external\minhook;$(ProjectDir)..\vendor\omath\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)src;$(ProjectDir)external\imgui;$(ProjectDir)external\minhook\include;$(ProjectDir)external\minhook\src;$(ProjectDir)..\vendor\omath\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp23</LanguageStandard>
       <DisableSpecificWarnings>6011;6387;6388;6001;26812;26813;26814;26815;26816;26817;26818;26819;26820;26821;26822;26823;26824;26825;26826;26827;26828;26829;26830;26831;26832;26833;26834;26835;26836;26837;26838;26839;26840;26841;26842;26843;26844;26845;26846;26847;26848;26849;26850;4456;4457;4458;4459;4460;4461;4462;4463;4464;4465;4466;4467;4468;4469;4470;6054;%(DisableSpecificWarnings)</DisableSpecificWarnings>
     </ClCompile>
@@ -55,8 +55,7 @@
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>$(ProjectDir)external\minhook;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>d3d11.lib;dxgi.lib;d3dcompiler.lib;psapi.lib;libMinHook.x64.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>d3d11.lib;dxgi.lib;d3dcompiler.lib;psapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <IgnoreSpecificDefaultLibraries>LIBCMT;LIBCMTD</IgnoreSpecificDefaultLibraries>
     </Link>
   </ItemDefinitionGroup>
@@ -73,6 +72,9 @@
     <ClCompile Include="external\imgui\imgui_widgets.cpp" />
     <ClCompile Include="external\imgui\imgui_impl_dx11.cpp" />
     <ClCompile Include="external\imgui\imgui_impl_win32.cpp" />
+    <ClCompile Include="external\minhook\src\buffer.c" />
+    <ClCompile Include="external\minhook\src\hook.c" />
+    <ClCompile Include="external\minhook\src\trampoline.c" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\bypass.h" />

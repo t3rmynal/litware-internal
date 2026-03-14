@@ -2,8 +2,7 @@
 #include <cstdint>
 #include <Windows.h>
 
-// In-process memory: direct pointer access (no ReadProcessMemory).
-// Use when DLL is injected into CS2.
+// direct ptrs, no rpm. inject into cs2
 
 namespace memory {
 

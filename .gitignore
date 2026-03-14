@@ -1,4 +1,3 @@
-# Build
 *.obj
 *.pdb
 *.ilk
@@ -18,8 +17,6 @@ x86/
 *.lastbuildstate
 *.tlog
 *.log
-
-# IDE
 .vs/
 *.user
 *.suo
@@ -28,21 +25,12 @@ x86/
 .idea/
 *.swp
 *.swo
-
-# Logs
 *.log
-
-# Misc
 *.cache
 Thumbs.db
 Desktop.ini
 txt.txt
-
-# Offsets dumper output (generated, not source)
 offsets/output/
 offsets/*.log
-
-# Old/reference (do not upload to GitHub)
 old/
 examples-old/
-
