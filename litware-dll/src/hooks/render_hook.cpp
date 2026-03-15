@@ -2025,12 +2025,12 @@ static void RunBHop(){
 
     if(!onGround){
         wasInAir = true;
-        if(holdFrames == 0)
-            Wr<int>(g_client+offsets::buttons::jump, 256);
+        if(holdFrames > 0)
+            holdFrames--;   // keep 65537 alive for game tick
         else
-            holdFrames--;
-    } else if(wasInAir){
-        // Приземлились — держим 65537 несколько кадров чтобы игровой тик поймал
+            Wr<int>(g_client+offsets::buttons::jump, 256);
+    } else {
+        // On ground with space held — always press jump (first press + every landing)
         Wr<int>(g_client+offsets::buttons::jump, 65537);
         holdFrames = 3;
         wasInAir = false;
@@ -5110,7 +5110,7 @@ static void RenderFrame(IDXGISwapChain*sc){
         RunNoFlash();RunNoSmoke();RunGlow();RunRadarHack();RunSkinChanger();
         RunBHop();
         RunFOVChanger();
-        RunAutostop();RunRCS();RunStrafeHelper();RunTriggerBot();ReleaseTriggerAttack();RunAimbot();RunDoubleTap();
+        RunAutostop();RunAimbot();RunRCS();RunStrafeHelper();RunTriggerBot();ReleaseTriggerAttack();RunDoubleTap();
     }else{g_esp_count=0;g_esp_oof_count=0;}
     ImGui_ImplDX11_NewFrame();ImGui_ImplWin32_NewFrame();ImGui::NewFrame();
     ImGuiIO&io=ImGui::GetIO();
