@@ -2005,35 +2005,41 @@ static void DrawDebugConsole() {
 }
 
 // Bunnyhop: hold jump pressed for several frames after landing so game tick catches it
+// CS2 bhop: trigger a fresh jump ONLY on the landing frame (state transition),
+// hold the press for a few frames so the server tick always catches it.
+// Writing 65537 continuously = game sees "held", not "new press" → no re-jump.
 static void RunBHop(){
     if(!g_bhopEnabled||!g_client)return;
     if(g_menuOpen) return;
 
-    static bool wasInAir = false;
-    static int holdFrames = 0;
-
     if(!(GetAsyncKeyState(VK_SPACE)&0x8000)){
-        wasInAir = false;
-        holdFrames = 0;
-        Wr<int>(g_client+offsets::buttons::jump, 256);
+        Wr<int>(g_client+offsets::buttons::jump, 0);
         return;
     }
 
     uintptr_t lp=Rd<uintptr_t>(g_client+offsets::client::dwLocalPlayerPawn);if(!lp)return;
-    uint32_t flags=Rd<uint32_t>(lp+offsets::base_entity::m_fFlags);
-    bool onGround = (flags & 1) != 0;
 
-    if(!onGround){
-        wasInAir = true;
-        if(holdFrames > 0)
-            holdFrames--;   // keep 65537 alive for game tick
-        else
-            Wr<int>(g_client+offsets::buttons::jump, 256);
-    } else {
-        // On ground with space held — always press jump (first press + every landing)
+    bool  onGround = (Rd<uint32_t>(lp+offsets::base_entity::m_fFlags) & 1) != 0;
+    float velZ     = Rd<float>(lp+offsets::base_entity::m_vecVelocity+8); // Z component
+
+    static bool  s_prevOnGround = false;
+    static float s_prevVelZ     = 0.f;
+    static int   s_holdFrames   = 0;
+
+    // Detect landing via flag transition OR velocity transition (falling → stopped)
+    bool justLanded = (onGround && !s_prevOnGround) ||
+                      (s_prevVelZ < -60.f && velZ > -10.f);
+
+    s_prevOnGround = onGround;
+    s_prevVelZ     = velZ;
+
+    if(justLanded) s_holdFrames = 3; // hold 3 frames so game tick picks up press
+
+    if(s_holdFrames > 0){
         Wr<int>(g_client+offsets::buttons::jump, 65537);
-        holdFrames = 3;
-        wasInAir = false;
+        --s_holdFrames;
+    } else {
+        Wr<int>(g_client+offsets::buttons::jump, 0);
     }
 }
 
@@ -2131,28 +2137,37 @@ static void RunThirdPerson(){
 static void RunRCS(){
     if(!g_rcsEnabled||!g_client)return;
     if(g_menuOpen)return;
-    if(!(GetAsyncKeyState(VK_LBUTTON)&0x8000)){g_rcsPrevPunchX=0.f;g_rcsPrevPunchY=0.f;return;}  // Only when shooting
     uintptr_t lp=Rd<uintptr_t>(g_client+offsets::client::dwLocalPlayerPawn);if(!lp)return;
-    int shots=Rd<int>(lp+offsets::cs_pawn::m_iShotsFired);
-    if(shots<1){g_rcsPrevPunchX=0.f;g_rcsPrevPunchY=0.f;return;}
 
     float punchX=Rd<float>(lp+offsets::cs_pawn::m_aimPunchAngle);
     float punchY=Rd<float>(lp+offsets::cs_pawn::m_aimPunchAngle+4);
 
+    bool shooting=(GetAsyncKeyState(VK_LBUTTON)&0x8000)!=0;
+    int shots=Rd<int>(lp+offsets::cs_pawn::m_iShotsFired);
+
+    if(!shooting || shots<1){
+        // Track current punch so delta=0 on the first active frame (no spike)
+        g_rcsPrevPunchX=punchX;
+        g_rcsPrevPunchY=punchY;
+        return;
+    }
+
     float dx=(punchX-g_rcsPrevPunchX)*g_rcsX;
     float dy=(punchY-g_rcsPrevPunchY)*g_rcsY;
+    g_rcsPrevPunchX=punchX;
+    g_rcsPrevPunchY=punchY;
 
-    uintptr_t vaAddr=ViewAnglesAddr();
+    if(dx==0.f&&dy==0.f)return; // punch didn't change this frame
+
+    uintptr_t vaAddr=ViewAnglesAddr();if(!vaAddr)return;
     float pitch=Rd<float>(vaAddr);float yaw=Rd<float>(vaAddr+4);
-    float mult=2.0f;
     float smooth=Clampf(g_rcsSmooth,1.f,50.f);
-    pitch-=(dx*mult)/smooth;
-    yaw-=(dy*mult)/smooth;
+    pitch-=(dx*2.f)/smooth;
+    yaw -=(dy*2.f)/smooth;
     pitch=Clampf(pitch,-89.f,89.f);
     if(yaw>180.f)yaw-=360.f;else if(yaw<-180.f)yaw+=360.f;
     Wr<float>(vaAddr,pitch);
     Wr<float>(vaAddr+4,yaw);
-    g_rcsPrevPunchX=punchX;g_rcsPrevPunchY=punchY;
 }
 
 // Auto Strafe: optimal yaw turn for max air speed gain (sv_airaccelerate/speed formula)
@@ -5110,7 +5125,7 @@ static void RenderFrame(IDXGISwapChain*sc){
         RunNoFlash();RunNoSmoke();RunGlow();RunRadarHack();RunSkinChanger();
         RunBHop();
         RunFOVChanger();
-        RunAutostop();RunAimbot();RunRCS();RunStrafeHelper();RunTriggerBot();ReleaseTriggerAttack();RunDoubleTap();
+        RunAutostop();RunRCS();RunAimbot();RunStrafeHelper();RunTriggerBot();ReleaseTriggerAttack();RunDoubleTap();
     }else{g_esp_count=0;g_esp_oof_count=0;}
     ImGui_ImplDX11_NewFrame();ImGui_ImplWin32_NewFrame();ImGui::NewFrame();
     ImGuiIO&io=ImGui::GetIO();
