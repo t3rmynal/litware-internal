@@ -1,6 +1,8 @@
 #include "render_hook.h"
 #include "Fonts.h"
 #include "res/font.h"
+#include "res/jetbrains_mono.h"
+#include "res/cs2_gun_icons.h"
 #include "../core/offsets.h"
 #include "../core/entity.h"
 #include "../core/world_to_screen.h"
@@ -93,6 +95,7 @@ static int g_espBoxStyle = 0;
 static float g_espBoxThick = 1.5f;
 static float g_espEnemyCol[4]{1.f,0.25f,0.25f,1.f};
 static float g_espTeamCol[4]{0.25f,0.55f,1.f,1.f};
+static bool g_espShowTeam = true;
 static bool g_espName = true;
 static float g_espNameSize = 13.5f;
 static bool g_espHealth = true;
@@ -247,6 +250,27 @@ static float g_menuAnim = 0.f;
 static float g_menuAnimSpeed = 12.f;
 static DWORD g_telegramNoteStart = 0;  // Telegram notice: 5s on load
 
+// Skins
+struct SkinOverride{
+    int weaponId = 0;
+    int paintKit = 0;
+    float wear = 0.01f;
+    int seed = 0;
+    int statTrak = 0;
+};
+static bool g_skinEnabled = false;
+static bool g_skinActiveOnly = false;
+static bool g_skinForceUpdate = false;
+static int g_skinSelectedWeapon = 0;
+static int g_skinPaintKit = 0;
+static float g_skinWear = 0.01f;
+static int g_skinSeed = 0;
+static int g_skinStatTrak = 0;
+static std::vector<SkinOverride> g_skinOverrides;
+using RegenerateWeaponSkinsFn = void(*)();
+static RegenerateWeaponSkinsFn g_regenSkins = nullptr;
+static bool g_regenSkinsReady = false;
+
 struct ThemeColors {
     ImU32 bg, surf, surf2, border;
     ImU32 text, textDim;
@@ -391,6 +415,22 @@ static inline ImU32 WithAlpha(ImU32 col, float a){
     int oa = (col >> IM_COL32_A_SHIFT) & 0xFF;
     int na = (int)Clampf((float)oa * a, 0.f, 255.f);
     return IM_COL32(r,g,b,na);
+}
+static inline ImU32 LerpColor(ImU32 a, ImU32 b, float t){
+    t = Clampf(t, 0.f, 1.f);
+    int ar = (a >> IM_COL32_R_SHIFT) & 0xFF;
+    int ag = (a >> IM_COL32_G_SHIFT) & 0xFF;
+    int ab = (a >> IM_COL32_B_SHIFT) & 0xFF;
+    int aa = (a >> IM_COL32_A_SHIFT) & 0xFF;
+    int br = (b >> IM_COL32_R_SHIFT) & 0xFF;
+    int bg = (b >> IM_COL32_G_SHIFT) & 0xFF;
+    int bb = (b >> IM_COL32_B_SHIFT) & 0xFF;
+    int ba = (b >> IM_COL32_A_SHIFT) & 0xFF;
+    int rr = (int)(ar + (br - ar) * t);
+    int rg = (int)(ag + (bg - ag) * t);
+    int rb = (int)(ab + (bb - ab) * t);
+    int ra = (int)(aa + (ba - aa) * t);
+    return IM_COL32(rr, rg, rb, ra);
 }
 
 static inline uintptr_t ViewAnglesAddr(){
@@ -633,6 +673,28 @@ static void RdName(uintptr_t addr,char*buf,size_t maxlen){
     RdStr(addr, buf, maxlen);
 }
 
+static void WCharToUtf8(ImWchar c, char out[5]){
+    if(!out){return;}
+    if(c < 0x80){
+        out[0] = (char)c; out[1] = 0;
+    }else if(c < 0x800){
+        out[0] = (char)(0xC0 | (c >> 6));
+        out[1] = (char)(0x80 | (c & 0x3F));
+        out[2] = 0;
+    }else{
+        out[0] = (char)(0xE0 | (c >> 12));
+        out[1] = (char)(0x80 | ((c >> 6) & 0x3F));
+        out[2] = (char)(0x80 | (c & 0x3F));
+        out[3] = 0;
+    }
+}
+
+static ImFont* GetEspFont(){
+    if(font::esp_mono) return font::esp_mono;
+    if(font::lexend_regular) return font::lexend_regular;
+    return ImGui::GetFont();
+}
+
 static void EnsureModules(){
     if(!g_client)g_client=(uintptr_t)GetModuleHandleA("client.dll");
     if(!g_engine2)g_engine2=(uintptr_t)GetModuleHandleA("engine2.dll");
@@ -782,6 +844,71 @@ static bool PlayerHasWeaponId(uintptr_t pawn, uintptr_t entityList, int weaponId
     return false;
 }
 
+static SkinOverride* FindSkinOverride(int weaponId){
+    for(auto& o : g_skinOverrides){
+        if(o.weaponId == weaponId) return &o;
+    }
+    return nullptr;
+}
+
+static void SetSkinOverride(int weaponId, int paintKit, float wear, int seed, int statTrak){
+    if(weaponId <= 0) return;
+    SkinOverride* o = FindSkinOverride(weaponId);
+    if(!o){
+        g_skinOverrides.push_back({});
+        o = &g_skinOverrides.back();
+    }
+    o->weaponId = weaponId;
+    o->paintKit = paintKit;
+    o->wear = Clampf(wear, 0.0001f, 1.f);
+    o->seed = seed;
+    o->statTrak = statTrak;
+}
+
+static void RemoveSkinOverride(int weaponId){
+    g_skinOverrides.erase(
+        std::remove_if(g_skinOverrides.begin(), g_skinOverrides.end(),
+            [&](const SkinOverride& o){ return o.weaponId == weaponId; }),
+        g_skinOverrides.end());
+}
+
+static void CollectWeapons(uintptr_t pawn, uintptr_t entityList, std::vector<uintptr_t>& out){
+    out.clear();
+    if(!pawn || !entityList) return;
+    uintptr_t ws = Rd<uintptr_t>(pawn + offsets::base_pawn::m_pWeaponServices);
+    if(!ws) return;
+    uintptr_t vecBase = ws + offsets::weapon_services::m_hMyWeapons;
+    int count = Rd<int>(vecBase);
+    if(count <= 0 || count > 64) return;
+    uintptr_t data = Rd<uintptr_t>(vecBase + 8);
+    if(!data) return;
+    out.reserve(count);
+    for(int i = 0; i < count; i++){
+        uint32_t h = Rd<uint32_t>(data + (size_t)i * 4);
+        uintptr_t w = ResolveHandle(entityList, h);
+        if(w) out.push_back(w);
+    }
+}
+
+static void ApplySkinToWeapon(uintptr_t weapon, const SkinOverride& o){
+    if(!weapon) return;
+    uintptr_t attr = weapon + offsets::econ_entity::m_AttributeManager;
+    uintptr_t item = attr + offsets::attribute_container::m_Item;
+    if(o.paintKit <= 0){
+        Wr<int>(weapon + offsets::econ_entity::m_nFallbackPaintKit, -1);
+        Wr<int>(weapon + offsets::econ_entity::m_nFallbackSeed, 0);
+        Wr<float>(weapon + offsets::econ_entity::m_flFallbackWear, 0.01f);
+        Wr<int>(weapon + offsets::econ_entity::m_nFallbackStatTrak, 0);
+        return;
+    }
+    Wr<uint32_t>(item + offsets::econ_item_view::m_iItemIDHigh, 0xFFFFFFFF);
+    Wr<uint32_t>(item + offsets::econ_item_view::m_iItemIDLow, 0xFFFFFFFF);
+    Wr<int>(weapon + offsets::econ_entity::m_nFallbackPaintKit, o.paintKit);
+    Wr<int>(weapon + offsets::econ_entity::m_nFallbackSeed, o.seed);
+    Wr<float>(weapon + offsets::econ_entity::m_flFallbackWear, Clampf(o.wear, 0.0001f, 1.f));
+    Wr<int>(weapon + offsets::econ_entity::m_nFallbackStatTrak, o.statTrak);
+}
+
 static int GetPlayerMoney(uintptr_t controller){
     if(!controller) return 0;
     uintptr_t ms = Rd<uintptr_t>(controller + offsets::controller::m_pInGameMoneyServices);
@@ -832,6 +959,21 @@ static bool ParseColor4(const std::string& v, float out[4]){
     return true;
 }
 
+static bool ParseSkinOverride(const std::string& v, SkinOverride& out){
+    std::stringstream ss(v);
+    char c=0;
+    if(!(ss>>out.weaponId)) return false;
+    if(!(ss>>c) || c!=',') return false;
+    if(!(ss>>out.paintKit)) return false;
+    if(!(ss>>c) || c!=',') return false;
+    if(!(ss>>out.wear)) return false;
+    if(!(ss>>c) || c!=',') return false;
+    if(!(ss>>out.seed)) return false;
+    if(!(ss>>c) || c!=',') return false;
+    if(!(ss>>out.statTrak)) return false;
+    return true;
+}
+
 // Config load helpers ? split to avoid MSVC "invalid nesting of blocks"
 static bool LoadConfigKeyEsp(const std::string& key, const std::string& val, bool& ok){
     if(key=="esp_enabled"){ g_espEnabled=ParseBool(val); return true; }
@@ -840,6 +982,7 @@ static bool LoadConfigKeyEsp(const std::string& key, const std::string& val, boo
     if(key=="esp_box_thick"){ float v; if(ParseFloat(val,v)) g_espBoxThick=v; else ok=false; return true; }
     if(key=="esp_enemy_col"){ if(!ParseColor4(val,g_espEnemyCol)) ok=false; return true; }
     if(key=="esp_team_col"){ if(!ParseColor4(val,g_espTeamCol)) ok=false; return true; }
+    if(key=="esp_team"){ g_espShowTeam=ParseBool(val); return true; }
     if(key=="esp_name"){ g_espName=ParseBool(val); return true; }
     if(key=="esp_name_size"){ float v; if(ParseFloat(val,v)) g_espNameSize=v; else ok=false; return true; }
     if(key=="esp_scale"){ float v; if(ParseFloat(val,v)) g_espScale=v; else ok=false; return true; }
@@ -945,6 +1088,21 @@ static bool LoadConfigKeyVisual(const std::string& key, const std::string& val, 
     if(key=="sky_color"){ if(!ParseColor4(val,g_skyColor)) ok=false; return true; }
     return false;
 }
+static bool LoadConfigKeySkins(const std::string& key, const std::string& val, bool& ok){
+    if(key=="skin_enabled"){ g_skinEnabled=ParseBool(val); return true; }
+    if(key=="skin_active_only"){ g_skinActiveOnly=ParseBool(val); return true; }
+    if(key=="skin_clear"){ g_skinOverrides.clear(); return true; }
+    if(key.rfind("skin_override_", 0) == 0){
+        SkinOverride o{};
+        if(ParseSkinOverride(val, o)){
+            SetSkinOverride(o.weaponId, o.paintKit, o.wear, o.seed, o.statTrak);
+        }else{
+            ok = false;
+        }
+        return true;
+    }
+    return false;
+}
 static bool LoadConfigKeyMisc(const std::string& key, const std::string& val, bool& ok){
     if(key=="watermark"){ g_watermarkEnabled=ParseBool(val); return true; }
     if(key=="watermark_fps"){ g_showFpsWatermark=ParseBool(val); return true; }
@@ -982,6 +1140,7 @@ static void ApplyDefaults(){
     g_espBoxThick = 1.5f;
     g_espEnemyCol[0]=1.f; g_espEnemyCol[1]=0.25f; g_espEnemyCol[2]=0.25f; g_espEnemyCol[3]=1.f;
     g_espTeamCol[0]=0.25f; g_espTeamCol[1]=0.55f; g_espTeamCol[2]=1.f; g_espTeamCol[3]=1.f;
+    g_espShowTeam = true;
     g_espName = true;
     g_espNameSize = 13.5f;
     g_espScale = 1.0f;
@@ -1098,6 +1257,15 @@ static void ApplyDefaults(){
     g_uiScale = 1.10f;
     g_menuTheme = 0;
     g_menuAnimSpeed = 12.f;
+    g_skinEnabled = false;
+    g_skinActiveOnly = false;
+    g_skinForceUpdate = false;
+    g_skinSelectedWeapon = 0;
+    g_skinPaintKit = 0;
+    g_skinWear = 0.01f;
+    g_skinSeed = 0;
+    g_skinStatTrak = 0;
+    g_skinOverrides.clear();
 }
 
 static bool SaveConfig(const char* name){
@@ -1110,6 +1278,7 @@ static bool SaveConfig(const char* name){
     WriteFloat(out, "esp_box_thick", g_espBoxThick);
     WriteColor(out, "esp_enemy_col", g_espEnemyCol);
     WriteColor(out, "esp_team_col", g_espTeamCol);
+    WriteBool(out, "esp_team", g_espShowTeam);
     WriteBool(out, "esp_name", g_espName);
     WriteFloat(out, "esp_name_size", g_espNameSize);
     WriteFloat(out, "esp_scale", g_espScale);
@@ -1227,6 +1396,14 @@ static bool SaveConfig(const char* name){
     WriteFloat(out, "ui_scale", g_uiScale);
     WriteInt(out, "menu_theme", g_menuTheme);
     WriteFloat(out, "menu_anim_speed", g_menuAnimSpeed);
+    WriteBool(out, "skin_enabled", g_skinEnabled);
+    WriteBool(out, "skin_active_only", g_skinActiveOnly);
+    out << "skin_clear=1\n";
+    for(size_t i = 0; i < g_skinOverrides.size(); ++i){
+        const SkinOverride& o = g_skinOverrides[i];
+        out << "skin_override_" << i << "="
+            << o.weaponId << "," << o.paintKit << "," << o.wear << "," << o.seed << "," << o.statTrak << "\n";
+    }
     return true;
 }
 
@@ -1237,6 +1414,7 @@ static bool LoadConfig(const char* name){
     bool ok = true;
     bool rcsXSet = false;
     bool rcsYSet = false;
+    g_skinOverrides.clear();
     while(std::getline(in, line)){
         if(line.empty()) continue;
         const auto pos = line.find('=');
@@ -1248,6 +1426,7 @@ static bool LoadConfig(const char* name){
         if(LoadConfigKeyAimbot(key, val, ok, rcsXSet, rcsYSet)) continue;
         if(LoadConfigKeyMovement(key, val, ok)) continue;
         if(LoadConfigKeyVisual(key, val, ok)) continue;
+        if(LoadConfigKeySkins(key, val, ok)) continue;
         LoadConfigKeyMisc(key, val, ok);
     }
     g_menuOpacity = Clampf(g_menuOpacity, 0.3f, 1.0f);
@@ -1669,6 +1848,56 @@ static void RunRadarHack(){
     }
 }
 
+static void EnsureSkinRegen(){
+    if(g_regenSkinsReady) return;
+    g_regenSkinsReady = true;
+    HMODULE client = GetModuleHandleA("client.dll");
+    if(!client) return;
+    static const char PAT_REGEN[] = "\x48\x83\xEC\x00\xE8\x00\x00\x00\x00\x48\x85\xC0\x0F\x84\x00\x00\x00\x00\x48\x8B\x10";
+    static const char MSK_REGEN[] = "xxx?x????xxxxx????xxx";
+    void* fn = PatternScan(client, PAT_REGEN, MSK_REGEN);
+    if(fn) g_regenSkins = reinterpret_cast<RegenerateWeaponSkinsFn>(fn);
+}
+
+static void RunSkinChanger(){
+    if(!g_client) return;
+    if(!g_skinEnabled){
+        if(g_skinForceUpdate){
+            g_skinForceUpdate = false;
+            EnsureSkinRegen();
+            if(g_regenSkins){
+                __try{ g_regenSkins(); }__except(EXCEPTION_EXECUTE_HANDLER){}
+            }
+        }
+        return;
+    }
+    uintptr_t entityList = Rd<uintptr_t>(g_client + offsets::client::dwEntityList);
+    if(!entityList) return;
+    uintptr_t lp = Rd<uintptr_t>(g_client + offsets::client::dwLocalPlayerPawn);
+    if(!lp) return;
+    if(g_skinActiveOnly){
+        uintptr_t weapon = GetActiveWeapon(lp, entityList);
+        if(weapon){
+            int wId = GetWeaponId(weapon);
+            if(SkinOverride* o = FindSkinOverride(wId)) ApplySkinToWeapon(weapon, *o);
+        }
+    }else{
+        static std::vector<uintptr_t> weapons;
+        CollectWeapons(lp, entityList, weapons);
+        for(uintptr_t w : weapons){
+            int wId = GetWeaponId(w);
+            if(SkinOverride* o = FindSkinOverride(wId)) ApplySkinToWeapon(w, *o);
+        }
+    }
+    if(g_skinForceUpdate){
+        g_skinForceUpdate = false;
+        EnsureSkinRegen();
+        if(g_regenSkins){
+            __try{ g_regenSkins(); }__except(EXCEPTION_EXECUTE_HANDLER){}
+        }
+    }
+}
+
 static void RunAutostop(){
     if(!g_autostopEnabled||!g_client)return;
     if(!(GetAsyncKeyState(g_aimbotKey)&0x8000))return;  // Only when holding aim key
@@ -1683,17 +1912,26 @@ static void RunAutostop(){
 // Bunnyhop: auto-jump when holding space. On ground=65537, in air=256 (per blast.hk/internal cheat convention)
 static void RunBHop(){
     if(!g_bhopEnabled||!g_client)return;
-    if(g_menuOpen)return;  // Don't bhop while menu is open
-    if(!(GetAsyncKeyState(VK_SPACE)&0x8000))return;  // Only when holding space
+    static bool s_wasOnGround = false;
+    if(g_menuOpen){
+        Wr<int>(g_client+offsets::buttons::jump, 256);
+        return;
+    }
     uintptr_t lp=Rd<uintptr_t>(g_client+offsets::client::dwLocalPlayerPawn);if(!lp)return;
     uint32_t flags=Rd<uint32_t>(lp+offsets::base_entity::m_fFlags);
     bool onGround = (flags & 1) != 0;  // FL_ONGROUND = bit 0
-
-    if(onGround){
-        Wr<int>(g_client+offsets::buttons::jump, 65537);  // Press jump
-    }else{
-        Wr<int>(g_client+offsets::buttons::jump, 256);   // Release in air (required for bhop - game needs "new" press on land)
+    bool wantJump = (GetAsyncKeyState(VK_SPACE)&0x8000) != 0;
+    if(!wantJump){
+        Wr<int>(g_client+offsets::buttons::jump, 256);
+        s_wasOnGround = onGround;
+        return;
     }
+    if(onGround && !s_wasOnGround){
+        Wr<int>(g_client+offsets::buttons::jump, 65537);  // Press jump once on landing
+    }else{
+        Wr<int>(g_client+offsets::buttons::jump, 256);   // Release in air so landing registers a fresh press
+    }
+    s_wasOnGround = onGround;
 }
 
 static void RunAntiAim(){
@@ -1822,13 +2060,11 @@ static void RunStrafeHelper(){
     uintptr_t lp=Rd<uintptr_t>(g_client+offsets::client::dwLocalPlayerPawn); if(!lp) return;
     if(Rd<uint32_t>(lp+offsets::base_entity::m_fFlags)&1) return;  // On ground - no strafe
     bool scoped=Rd<bool>(lp+offsets::cs_pawn::m_bIsScoped); if(scoped) return;  // Don't override aim when scoped
-    bool left=(GetAsyncKeyState('A')&0x8000)!=0;
-    bool right=(GetAsyncKeyState('D')&0x8000)!=0;
-    if(!left&&!right) return;
     uintptr_t vaAddr=ViewAnglesAddr(); if(!vaAddr) return;
     float curYaw=Rd<float>(vaAddr+4);
     Vec3 vel=Rd<Vec3>(lp+offsets::base_entity::m_vecVelocity);
     float speed2d=sqrtf(vel.x*vel.x+vel.y*vel.y);
+    if(speed2d < 5.f) return;
     const float sv_airaccel=12.f;
     float optimalTurn=15.f;
     if(speed2d>5.f){
@@ -1836,7 +2072,16 @@ static void RunStrafeHelper(){
         optimalTurn=2.f*57.2958f*asinf(ratio);
         optimalTurn=Clampf(optimalTurn,2.f,25.f);
     }
-    float turnAmount=(left?-optimalTurn:0.f)+(right?optimalTurn:0.f);
+    bool left=(GetAsyncKeyState('A')&0x8000)!=0;
+    bool right=(GetAsyncKeyState('D')&0x8000)!=0;
+    float turnAmount=0.f;
+    if(left ^ right){
+        turnAmount = left ? -optimalTurn : optimalTurn;
+    }else{
+        float velYaw = atan2f(vel.y, vel.x) * 57.2958f;
+        float delta = AngleDiff(curYaw, velYaw);
+        turnAmount = (delta > 0.f) ? -optimalTurn : optimalTurn;
+    }
     float newYaw=curYaw+turnAmount;
     if(newYaw>180.f)newYaw-=360.f; else if(newYaw<-180.f)newYaw+=360.f;
     Wr<float>(vaAddr+4,newYaw);
@@ -2850,6 +3095,46 @@ static bool PidoInputText(const char* label, const char* desc, char* buf, size_t
     return changed;
 }
 
+static bool PidoInputInt(const char* label, const char* desc, int* v){
+    ImGui::PushID(label);
+    float s = MenuScale();
+    ImVec2 pos = ImGui::GetCursorScreenPos();
+    float width = ImGui::GetContentRegionAvail().x;
+    float height = 50.f * s;
+    ImGui::Dummy(ImVec2(width, height));
+    ImVec2 nextPos = ImGui::GetCursorScreenPos();
+    ImVec2 bbMin = pos;
+    ImVec2 bbMax{pos.x+width, pos.y+height};
+    bool hovered = ImGui::IsMouseHoveringRect(bbMin, bbMax);
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImU32 bg = hovered ? IM_COL32(15,17,20,255) : g_pido.elemBg;
+    dl->AddRectFilled(bbMin, bbMax, bg, 4.f * s);
+    dl->AddRect(bbMin, bbMax, g_pido.elemStroke, 4.f * s);
+
+    ImFont* bold = font::lexend_bold ? font::lexend_bold : ImGui::GetFont();
+    ImFont* reg = font::lexend_regular ? font::lexend_regular : ImGui::GetFont();
+    const char* labelEnd = LabelTextEnd(label);
+    float labelY = (desc && desc[0]) ? pos.y+6.f*s : pos.y + (height - bold->LegacySize*s)*0.5f;
+    dl->AddText(bold, 14.f * s, {pos.x+10.f*s, labelY}, g_pido.textActive, label, labelEnd);
+    if(desc && desc[0]) dl->AddText(reg, 12.f * s, {pos.x+10.f*s, pos.y+26.f*s}, g_pido.textDim, desc);
+
+    float inputW = (std::min)(200.f * s, width * 0.55f);
+    ImGui::SetCursorScreenPos({bbMax.x - inputW - 10.f*s, bbMin.y + (height - 24.f*s)*0.5f});
+    ImGui::PushItemWidth(inputW);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.f * s);
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, ImGui::ColorConvertU32ToFloat4(g_pido.elemBg));
+    bool changed = ImGui::InputInt("##input", v, 1, 10);
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar();
+    ImGui::PopItemWidth();
+
+    ImGui::SetCursorScreenPos(nextPos);
+    ImGui::Dummy(ImVec2(0,0));
+    ImGui::PopID();
+    return changed;
+}
+
 static bool PidoKeybind(const char* label, const char* desc, int* key){
     static int* capture = nullptr;
     ImGui::PushID(label);
@@ -3096,6 +3381,7 @@ static void DrawMenu(){
         PidoToggle("Enable##esp","", &g_espEnabled);
         if(g_safeMode){ ImGui::SameLine(); if(ImGui::Button("Retry##esp2")) g_safeMode=false; }
         PidoToggle("Only visible","", &g_espOnlyVis);
+        PidoToggle("Teammates","", &g_espShowTeam);
         const char* boxItems[]={"Corner","Full","Corner Fill","Outline","Coal","Outline Coal"};
         PidoCombo("Box","", &g_espBoxStyle, boxItems, IM_ARRAYSIZE(boxItems));
         PidoColorEdit4("Enemy","", g_espEnemyCol);
@@ -3171,7 +3457,64 @@ static void DrawMenu(){
         ImGui::SetCursorPos({contentX, contentY});
         BeginPidoChild("##skins_full", ImVec2(contentW, contentH));
         PidoSection("Skins");
-        ImGui::TextDisabled("Coming soon...");
+        PidoToggle("Enable","", &g_skinEnabled);
+        PidoToggle("Active weapon only","", &g_skinActiveOnly);
+        if(PidoButton("Force update", ImVec2(0, 0))) g_skinForceUpdate = true;
+        ImGui::Spacing();
+        PidoSection("Override");
+        static const int kSkinWeaponIds[] = {
+            1,2,3,4,7,8,9,10,11,13,14,16,17,19,24,25,26,27,28,29,30,32,33,34,35,36,38,39,40,42,59,60,61,63,64
+        };
+        const int weaponCount = IM_ARRAYSIZE(kSkinWeaponIds);
+        if(g_skinSelectedWeapon < 0 || g_skinSelectedWeapon >= weaponCount) g_skinSelectedWeapon = 0;
+        int selId = kSkinWeaponIds[g_skinSelectedWeapon];
+        WeaponInfo selInfo = WeaponInfoForId(selId);
+        const char* preview = selInfo.name ? selInfo.name : "Weapon";
+        if(ImGui::BeginCombo("Weapon", preview, ImGuiComboFlags_None)){
+            for(int i = 0; i < weaponCount; i++){
+                int wid = kSkinWeaponIds[i];
+                WeaponInfo wi = WeaponInfoForId(wid);
+                const char* wname = wi.name ? wi.name : "Weapon";
+                bool selected = (g_skinSelectedWeapon == i);
+                if(ImGui::Selectable(wname, selected)) g_skinSelectedWeapon = i;
+                if(selected) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+        static int s_lastWeaponId = -1;
+        if(selId != s_lastWeaponId){
+            if(SkinOverride* cur = FindSkinOverride(selId)){
+                g_skinPaintKit = cur->paintKit;
+                g_skinWear = cur->wear;
+                g_skinSeed = cur->seed;
+                g_skinStatTrak = cur->statTrak;
+            }else{
+                g_skinPaintKit = 0;
+                g_skinWear = 0.01f;
+                g_skinSeed = 0;
+                g_skinStatTrak = 0;
+            }
+            s_lastWeaponId = selId;
+        }
+        PidoInputInt("Paint kit","", &g_skinPaintKit);
+        PidoSliderFloat("Wear","", &g_skinWear, 0.0001f, 1.0f, "%.4f");
+        PidoInputInt("Seed","", &g_skinSeed);
+        PidoInputInt("StatTrak","", &g_skinStatTrak);
+        if(PidoButton("Apply", ImVec2(0, 0))){
+            SetSkinOverride(selId, g_skinPaintKit, g_skinWear, g_skinSeed, g_skinStatTrak);
+            g_skinForceUpdate = true;
+        }
+        ImGui::SameLine();
+        if(PidoButton("Clear", ImVec2(0, 0))){
+            RemoveSkinOverride(selId);
+            g_skinForceUpdate = true;
+        }
+        ImGui::SameLine();
+        if(PidoButton("Clear all", ImVec2(0, 0))){
+            g_skinOverrides.clear();
+            g_skinForceUpdate = true;
+        }
+        ImGui::TextDisabled("Overrides: %d", (int)g_skinOverrides.size());
         EndPidoChild();
     }else if(g_activeTab==4){
         static int s_lastConfigTabFrame = -1;
@@ -3703,7 +4046,7 @@ static bool DrawSkeletonBones(ImDrawList*dl,const ESPEntry& e,ImU32 col,ImU32 sh
     hAnkR = hAnkR && validPos(ankleR);
     if(!(hHead && hNeck && hPel)) return false;
     bool drew=false;
-    float thick = Clampf(g_skeletonThick, 0.5f, 3.5f);
+    float thick = Clampf(g_skeletonThick, 0.5f, 3.5f) * Clampf(g_espScale, 0.7f, 1.5f);
     const float shadowOff = (shadowCol != 0) ? 1.5f : 0.f;
     auto line=[&](bool ha,const Vec3& a,bool hb,const Vec3& b){
         if(!ha||!hb) return;
@@ -3740,15 +4083,19 @@ static void DrawESP(){
     ImDrawList*dl=ImGui::GetForegroundDrawList();if(!dl)return;
     const float* vm = g_client ? reinterpret_cast<const float*>(g_client+offsets::client::dwViewMatrix) : nullptr;
     uintptr_t entityList = g_client ? Rd<uintptr_t>(g_client+offsets::client::dwEntityList) : 0;
+    ImFont* espFont = GetEspFont();
     auto drawOne=[&](const ESPEntry& e, float alphaMul){
         if(!e.valid||e.distance>g_espMaxDist)return;
         bool enemy=(e.team!=g_esp_local_team);float*ecol=enemy?g_espEnemyCol:g_espTeamCol;
+        if(!enemy && !g_espShowTeam) return;
+        float s = Clampf(g_espScale, 0.7f, 1.5f);
+        float boxThick = g_espBoxThick * s;
         float alpha=(e.visible?1.f:0.5f)*alphaMul;float bl=e.box_l,bt2=e.box_t,br=e.box_r,bb=e.box_b;
         float bw=br-bl,bh=bb-bt2,cx=(bl+br)*0.5f;
         ImU32 boxCol=IM_COL32((int)(ecol[0]*255),(int)(ecol[1]*255),(int)(ecol[2]*255),(int)(alpha*255));
         ImU32 dimCol=IM_COL32(160,160,170,(int)(180*alpha));
         ImU32 accent=IM_COL32((int)(g_accentColor[0]*255),(int)(g_accentColor[1]*255),(int)(g_accentColor[2]*255),(int)(200*alpha));
-        float belowY = bb + 3.f;
+        float belowY = bb + 3.f * s;
         // Shadow + glow layers (ESP)
         dl->AddRectFilled({bl+3.f,bt2+3.f},{br+3.f,bb+3.f},IM_COL32(0,0,0,(int)(45*alpha)));
         dl->AddRectFilled({bl+2.f,bt2+2.f},{br+2.f,bb+2.f},IM_COL32(0,0,0,(int)(50*alpha)));
@@ -3758,35 +4105,36 @@ static void DrawESP(){
             dl->AddRect({bl-(float)g,bt2-(float)g},{br+(float)g,bb+(float)g},IM_COL32(r,g_,b,(int)(ga*alpha)),0.f,0,1.5f);
         }
         if(g_espBoxStyle==0){
-            DrawCornerBox(dl,bl,bt2,br,bb,IM_COL32(0,0,0,(int)(200*alpha)),g_espBoxThick+1.0f);
-            DrawCornerBox(dl,bl,bt2,br,bb,boxCol,g_espBoxThick);
+            DrawCornerBox(dl,bl,bt2,br,bb,IM_COL32(0,0,0,(int)(200*alpha)),boxThick+1.0f);
+            DrawCornerBox(dl,bl,bt2,br,bb,boxCol,boxThick);
         }
         else if(g_espBoxStyle==1){
-            dl->AddRect({bl,bt2},{br,bb},IM_COL32(0,0,0,(int)(200*alpha)),0.f,0,g_espBoxThick+1.0f);
-            dl->AddRect({bl,bt2},{br,bb},boxCol,0.f,0,g_espBoxThick);
+            dl->AddRect({bl,bt2},{br,bb},IM_COL32(0,0,0,(int)(200*alpha)),0.f,0,boxThick+1.0f);
+            dl->AddRect({bl,bt2},{br,bb},boxCol,0.f,0,boxThick);
         }
         else if(g_espBoxStyle==2){
             dl->AddRectFilled({bl,bt2},{br,bb},IM_COL32((int)(ecol[0]*255),(int)(ecol[1]*255),(int)(ecol[2]*255),(int)(35*alpha)));
-            DrawCornerBox(dl,bl,bt2,br,bb,IM_COL32(0,0,0,(int)(200*alpha)),g_espBoxThick+1.0f);
-            DrawCornerBox(dl,bl,bt2,br,bb,boxCol,g_espBoxThick);
+            DrawCornerBox(dl,bl,bt2,br,bb,IM_COL32(0,0,0,(int)(200*alpha)),boxThick+1.0f);
+            DrawCornerBox(dl,bl,bt2,br,bb,boxCol,boxThick);
         }
         else if(g_espBoxStyle==3){
-            DrawOutlineBox(dl,bl,bt2,br,bb,boxCol,g_espBoxThick);
+            DrawOutlineBox(dl,bl,bt2,br,bb,boxCol,boxThick);
         }
         else if(g_espBoxStyle==4){
-            DrawCoalBox(dl,bl,bt2,br,bb,IM_COL32(0,0,0,(int)(200*alpha)),g_espBoxThick+1.0f);
-            DrawCoalBox(dl,bl,bt2,br,bb,boxCol,g_espBoxThick);
+            DrawCoalBox(dl,bl,bt2,br,bb,IM_COL32(0,0,0,(int)(200*alpha)),boxThick+1.0f);
+            DrawCoalBox(dl,bl,bt2,br,bb,boxCol,boxThick);
         }
         else if(g_espBoxStyle==5){
-            DrawOutlineCoalBox(dl,bl,bt2,br,bb,boxCol,g_espBoxThick);
+            DrawOutlineCoalBox(dl,bl,bt2,br,bb,boxCol,boxThick);
         }
         if(g_espHealth&&e.health>0){
-            float fill=Clampf((float)e.health/100.f,0.f,1.f),barW=5.f,barOff=8.f,barRound=4.f;
+            float fill=Clampf((float)e.health/100.f,0.f,1.f),barW=5.f*s,barOff=8.f*s,barRound=4.f*s;
             ImU32 hbCol=HealthCol(e.health);
             if(g_espHealthStyle==1)hbCol=IM_COL32(60,200,120,(int)(220*alpha));
             if(g_espHealthStyle==2)hbCol=boxCol;
             ImU32 c1=IM_COL32((int)(g_espHealthGradientCol1[0]*255),(int)(g_espHealthGradientCol1[1]*255),(int)(g_espHealthGradientCol1[2]*255),(int)(240*alpha));
             ImU32 c2=IM_COL32((int)(g_espHealthGradientCol2[0]*255),(int)(g_espHealthGradientCol2[1]*255),(int)(g_espHealthGradientCol2[2]*255),(int)(240*alpha));
+            ImU32 cFill = LerpColor(c2, c1, fill);
             ImU32 bgDark=IM_COL32(8,8,12,(int)(220*alpha));
             ImU32 borderCol=IM_COL32(40,40,50,(int)(180*alpha));
             float bx=0.f, byBar=0.f;
@@ -3807,7 +4155,7 @@ static void DrawESP(){
                 if(g_espHealthStyle==0){
                     ImU32 c1=IM_COL32((int)(g_espHealthGradientCol1[0]*255),(int)(g_espHealthGradientCol1[1]*255),(int)(g_espHealthGradientCol1[2]*255),(int)(240*alpha));
                     ImU32 c2=IM_COL32((int)(g_espHealthGradientCol2[0]*255),(int)(g_espHealthGradientCol2[1]*255),(int)(g_espHealthGradientCol2[2]*255),(int)(240*alpha));
-                    dl->AddRectFilledMultiColor({bx,bt2+bh*(1.f-fill)},{bx+barW,bb}, c1,c1, c2,c2);
+                    dl->AddRectFilledMultiColor({bx,bt2+bh*(1.f-fill)},{bx+barW,bb}, cFill,cFill, c2,c2);
                 }else{
                     dl->AddRectFilled({bx,bt2+bh*(1.f-fill)},{bx+barW,bb},hbCol,barRound);
                 }
@@ -3829,7 +4177,7 @@ static void DrawESP(){
                 if(g_espHealthStyle==0){
                     ImU32 c1=IM_COL32((int)(g_espHealthGradientCol1[0]*255),(int)(g_espHealthGradientCol1[1]*255),(int)(g_espHealthGradientCol1[2]*255),(int)(240*alpha));
                     ImU32 c2=IM_COL32((int)(g_espHealthGradientCol2[0]*255),(int)(g_espHealthGradientCol2[1]*255),(int)(g_espHealthGradientCol2[2]*255),(int)(240*alpha));
-                    dl->AddRectFilledMultiColor({bx,bt2+bh*(1.f-fill)},{bx+barW,bb}, c1,c1, c2,c2);
+                    dl->AddRectFilledMultiColor({bx,bt2+bh*(1.f-fill)},{bx+barW,bb}, cFill,cFill, c2,c2);
                 }else{
                     dl->AddRectFilled({bx,bt2+bh*(1.f-fill)},{bx+barW,bb},hbCol,barRound);
                 }
@@ -3850,15 +4198,15 @@ static void DrawESP(){
                 if(g_espHealthStyle==0){
                     ImU32 c1=IM_COL32((int)(g_espHealthGradientCol1[0]*255),(int)(g_espHealthGradientCol1[1]*255),(int)(g_espHealthGradientCol1[2]*255),(int)(240*alpha));
                     ImU32 c2=IM_COL32((int)(g_espHealthGradientCol2[0]*255),(int)(g_espHealthGradientCol2[1]*255),(int)(g_espHealthGradientCol2[2]*255),(int)(240*alpha));
-                    dl->AddRectFilledMultiColor({bl,by},{bl+bw*fill,by+barW}, c2,c1, c1,c2);
+                    dl->AddRectFilledMultiColor({bl,by},{bl+bw*fill,by+barW}, c2,cFill, cFill,c2);
                 }else{
                     dl->AddRectFilled({bl,by},{bl+bw*fill,by+barW},hbCol,barRound);
                 }
             }
             if(e.health<100){
                 char hpBuf[16]; std::snprintf(hpBuf,sizeof(hpBuf),"%d",e.health);
-                ImFont* font=ImGui::GetFont();
-                float fsz=(g_espHealthPos==1)?10.f:g_espNameSize*0.85f;
+                ImFont* font=espFont;
+                float fsz=(g_espHealthPos==1)?(10.f*s):(g_espNameSize*0.85f*s);
                 ImVec2 ts=font->CalcTextSizeA(fsz,FLT_MAX,0.f,hpBuf);
                 float tx=bx+(g_espHealthPos==0?barW+2.f:(g_espHealthPos==2?-ts.x-2.f:bl+bw*0.5f-ts.x*0.5f));
                 float ty=(g_espHealthPos==1)?bt2-barOff-barW-ts.y-1.f:byBar-ts.y*0.5f;
@@ -3868,7 +4216,7 @@ static void DrawESP(){
         }
         if(g_espHeadDot){
             float dotR = bw*0.16f;
-            if(dotR < 7.f) dotR = 7.f;
+            if(dotR < 7.f * s) dotR = 7.f * s;
             for(int g=4;g>=1;g--){
                 float o=(float)g; int r_=(boxCol>>IM_COL32_R_SHIFT)&0xFF,g_=(boxCol>>IM_COL32_G_SHIFT)&0xFF,b=(boxCol>>IM_COL32_B_SHIFT)&0xFF;
                 dl->AddCircle({e.head_fx,e.head_fy},dotR+o,IM_COL32(r_,g_,b,(int)(35*alpha/(float)g)),16,1.2f);
@@ -3882,8 +4230,8 @@ static void DrawESP(){
             float sx=(float)g_esp_screen_w*0.5f,sh=(float)g_esp_screen_h;
             float sy = (g_espLineAnchor==0) ? 0.f : ((g_espLineAnchor==2) ? sh : sh*0.5f);
             int r=(int)(ecol[0]*255),g_=(int)(ecol[1]*255),b=(int)(ecol[2]*255);
-            for(int gl=3;gl>=1;gl--) dl->AddLine({sx+(float)gl,sy+(float)gl},{e.feet_x+(float)gl,e.feet_y+(float)gl},IM_COL32(0,0,0,(int)(40*alpha/(float)gl)),1.2f+(float)gl*0.3f);
-            dl->AddLine({sx,sy},{e.feet_x,e.feet_y},IM_COL32(r,g_,b,(int)(100*alpha)),0.8f);
+            for(int gl=3;gl>=1;gl--) dl->AddLine({sx+(float)gl,sy+(float)gl},{e.feet_x+(float)gl,e.feet_y+(float)gl},IM_COL32(0,0,0,(int)(40*alpha/(float)gl)),(1.2f+(float)gl*0.3f)*s);
+            dl->AddLine({sx,sy},{e.feet_x,e.feet_y},IM_COL32(r,g_,b,(int)(100*alpha)),0.8f*s);
         }
         if(g_espSkeleton){
             ImU32 scol=IM_COL32((int)(ecol[0]*255),(int)(ecol[1]*255),(int)(ecol[2]*255),(int)(180*alpha));
@@ -3934,27 +4282,35 @@ static void DrawESP(){
             }
         }
         if(g_espName&&e.name[0]){
-            ImFont* font = font::lexend_regular ? font::lexend_regular : ImGui::GetFont();  // Cyrillic support
-            ImVec2 ts=font->CalcTextSizeA(g_espNameSize,FLT_MAX,0.f,e.name);
-            float tx=cx-ts.x*0.5f,ty=bt2-ts.y-4.f;
+            ImFont* font = espFont;
+            float nameSize = g_espNameSize * s;
+            ImVec2 ts=font->CalcTextSizeA(nameSize,FLT_MAX,0.f,e.name);
+            float padX = 6.f * s, padY = 3.f * s;
+            float tx=cx-ts.x*0.5f,ty=bt2-ts.y-6.f*s;
+            ImVec2 bgMin{tx - padX, ty - padY};
+            ImVec2 bgMax{tx + ts.x + padX, ty + ts.y + padY};
+            dl->AddRectFilled(bgMin, bgMax, IM_COL32(12,12,16,(int)(140*alpha)), 4.f * s);
+            dl->AddRect(bgMin, bgMax, IM_COL32(0,0,0,(int)(200*alpha)), 4.f * s);
+            dl->AddRectFilled({bgMin.x, bgMax.y - 1.f*s}, {bgMax.x, bgMax.y}, accent, 3.f*s);
             for(int glow=3;glow>=1;glow--){
                 float o=(float)glow; int glowA=(int)(60*alpha/(float)glow);
-                dl->AddText(font,g_espNameSize,{tx+o,ty},IM_COL32(0,0,0,glowA),e.name);
-                dl->AddText(font,g_espNameSize,{tx-o,ty},IM_COL32(0,0,0,glowA),e.name);
+                dl->AddText(font,nameSize,{tx+o,ty},IM_COL32(0,0,0,glowA),e.name);
+                dl->AddText(font,nameSize,{tx-o,ty},IM_COL32(0,0,0,glowA),e.name);
             }
-            dl->AddText(font,g_espNameSize,{tx+1.f,ty+1.f},IM_COL32(0,0,0,(int)(150*alpha)),e.name);
-            dl->AddText(font,g_espNameSize,{tx,ty},IM_COL32(220,220,230,(int)(alpha*255)),e.name);
+            dl->AddText(font,nameSize,{tx+1.f,ty+1.f},IM_COL32(0,0,0,(int)(150*alpha)),e.name);
+            dl->AddText(font,nameSize,{tx,ty},IM_COL32(220,220,230,(int)(alpha*255)),e.name);
         }
         if(e.planting||e.flashed||e.scoped||e.defusing||e.hasBomb||e.hasKits){
-            ImFont* sf = font::lexend_regular ? font::lexend_regular : ImGui::GetFont();
-            float tagX = br + 8.f;  // draw status tags to the right of the box
+            ImFont* sf = espFont;
+            float tagX = br + 8.f * s;  // draw status tags to the right of the box
             float tagY = bt2;
+            float tagSize = 10.f * s;
             ImU32 tagCol = IM_COL32((int)(g_accentColor[0]*255),(int)(g_accentColor[1]*255),(int)(g_accentColor[2]*255),(int)(200*alpha));
             auto drawTag=[&](const char* t){
-                for(int sh=2;sh>=1;sh--) dl->AddText(sf,10.f,{tagX+(float)sh,tagY+(float)sh},IM_COL32(0,0,0,(int)(90*alpha/(float)sh)),t);
-                dl->AddText(sf,10.f,{tagX+1.f,tagY+1.f},IM_COL32(0,0,0,(int)(140*alpha)),t);
-                dl->AddText(sf,10.f,{tagX,tagY},tagCol,t);
-                tagY+=12.f;
+                for(int sh=2;sh>=1;sh--) dl->AddText(sf,tagSize,{tagX+(float)sh,tagY+(float)sh},IM_COL32(0,0,0,(int)(90*alpha/(float)sh)),t);
+                dl->AddText(sf,tagSize,{tagX+1.f,tagY+1.f},IM_COL32(0,0,0,(int)(140*alpha)),t);
+                dl->AddText(sf,tagSize,{tagX,tagY},tagCol,t);
+                tagY+=12.f * s;
             };
             if(e.planting){ drawTag("Planting"); }
             if(e.scoped){ drawTag("Scoped"); }
@@ -3977,8 +4333,8 @@ static void DrawESP(){
         if(g_espAmmo && weapon && winfo.maxClip > 0){
             int maxClip = winfo.maxClip;
             float frac = Clampf((float)clip / (float)maxClip, 0.f, 1.f);
-            float barH = 5.f;
-            float barRound = 4.f;
+            float barH = 5.f * s;
+            float barRound = 4.f * s;
             ImU32 ammoBg = IM_COL32((int)(g_espAmmoCol1[0]*255),(int)(g_espAmmoCol1[1]*255),(int)(g_espAmmoCol1[2]*255),(int)(230*alpha));
             ImU32 ammoBorder = IM_COL32(45,45,65,(int)(200*alpha));
             ImU32 ammoOuter = IM_COL32(0,0,0,(int)(180*alpha));
@@ -4005,45 +4361,68 @@ static void DrawESP(){
                 dl->AddRectFilled({bl,belowY},{bl+bw*frac,belowY+barH},ammoBarCol,barRound);
             }
             if(frac > 0.01f && frac < 1.f) dl->AddRect({bl+bw*frac,belowY},{bl+bw*frac+0.5f,belowY+barH},IM_COL32(255,255,255,(int)(80*alpha)),0.f,0,1.f);
-            belowY += barH + 5.f;
+            belowY += barH + 5.f * s;
         }
         if((g_espWeapon||g_espWeaponIcon) && weapon){
             float iconW = 0.f;
             ImVec2 its = {0.f, 0.f};
             ImVec2 ts = {0.f, 0.f};
-            // gun_icons font disabled - causes crash, use text fallback (AK, M4, etc.)
-            if(g_espWeaponIcon && *winfo.icon){
-                ImFont* wf = font::lexend_regular ? font::lexend_regular : ImGui::GetFont();
-                its = wf->CalcTextSizeA(12.f, FLT_MAX, 0.f, winfo.icon);
-                iconW = its.x + (g_espWeapon ? 4.f : 0.f);
+            float wepSize = 12.f * s;
+            ImFont* textFont = espFont;
+            ImFont* iconFont = nullptr;
+            const char* iconText = nullptr;
+            char iconBuf[5] = {};
+            if(g_espWeaponIcon){
+                ImFontBaked* gunBaked = font::gun_icons ? font::gun_icons->GetFontBaked(font::gun_icons->LegacySize) : nullptr;
+                if(gunBaked && winfo.iconChar && gunBaked->FindGlyphNoFallback(winfo.iconChar)){
+                    WCharToUtf8(winfo.iconChar, iconBuf);
+                    iconText = iconBuf;
+                    iconFont = font::gun_icons;
+                }else if(winfo.icon && winfo.icon[0]){
+                    iconText = winfo.icon;
+                    iconFont = textFont;
+                }
             }
+            if(iconText && iconFont){
+                its = iconFont->CalcTextSizeA(wepSize, FLT_MAX, 0.f, iconText);
+                iconW = its.x + (g_espWeapon ? 4.f * s : 0.f);
+            }
+            std::string wtext;
             if(g_espWeapon){
-                std::string wtext = winfo.name;
+                wtext = winfo.name;
                 if(!wtext.empty()){
-                    ImFont* wf = font::lexend_regular ? font::lexend_regular : ImGui::GetFont();
-                    ts = wf->CalcTextSizeA(12.f, FLT_MAX, 0.f, wtext.c_str());
+                    ts = textFont->CalcTextSizeA(wepSize, FLT_MAX, 0.f, wtext.c_str());
                 }
             }
             float blockLeft = cx - (iconW + ts.x)*0.5f;
-            if(g_espWeaponIcon && *winfo.icon){
-                ImFont* wf = font::lexend_regular ? font::lexend_regular : ImGui::GetFont();
-                float itx = blockLeft;
-                dl->AddText(wf, 12.f, {itx+1.f,belowY+1.f}, IM_COL32(0,0,0,(int)(140*alpha)), winfo.icon);
-                dl->AddText(wf, 12.f, {itx,belowY}, dimCol, winfo.icon);
-            }
-            if(g_espWeapon){
-                std::string wtext = winfo.name;
-                if(!wtext.empty()){
-                    ImFont* wf = font::lexend_regular ? font::lexend_regular : ImGui::GetFont();
-                    float tx = blockLeft + iconW;
-                    dl->AddText(wf, 12.f, {tx+1.f,belowY+1.f}, IM_COL32(0,0,0,(int)(140*alpha)), wtext.c_str());
-                    dl->AddText(wf, 12.f, {tx,belowY}, dimCol, wtext.c_str());
+            float iconYOffset = 0.f;
+            if(iconText && iconFont && textFont && iconFont != textFont && (g_espWeapon && !wtext.empty())){
+                ImFontBaked* iconBaked = iconFont->GetFontBaked(wepSize);
+                ImFontBaked* textBaked = textFont->GetFontBaked(wepSize);
+                if(iconBaked && textBaked){
+                    float iconBaseline = iconBaked->Ascent;
+                    float textBaseline = textBaked->Ascent;
+                    iconYOffset = textBaseline - iconBaseline;
                 }
             }
+            if(iconText && iconFont){
+                float itx = blockLeft;
+                float ity = belowY + iconYOffset;
+                ImU32 shadowCol = IM_COL32(0,0,0,(int)(140*alpha));
+                dl->AddText(iconFont, wepSize, {itx+1.f,ity+1.f}, shadowCol, iconText);
+                dl->AddText(iconFont, wepSize, {itx,ity}, dimCol, iconText);
+            }
+            if(g_espWeapon && !wtext.empty()){
+                float tx = blockLeft + iconW;
+                ImU32 shadowCol = IM_COL32(0,0,0,(int)(140*alpha));
+                dl->AddText(textFont, wepSize, {tx+1.f,belowY+1.f}, shadowCol, wtext.c_str());
+                dl->AddText(textFont, wepSize, {tx,belowY}, dimCol, wtext.c_str());
+            }
             if(g_espWeaponIcon||g_espWeapon){
-                float maxH = 12.f;
-                if(g_espWeapon) maxH = 14.f;
-                belowY += maxH + 2.f;
+                float maxH = wepSize;
+                if(iconText && iconFont) maxH = std::max(maxH, its.y);
+                if(g_espWeapon && !wtext.empty()) maxH = std::max(maxH, ts.y);
+                belowY += maxH + 2.f * s;
             }
         }
         if(g_espMoney){
@@ -4051,21 +4430,25 @@ static void DrawESP(){
             if(money > 0){
                 char mbuf[32];
                 std::snprintf(mbuf,sizeof(mbuf),"$%d", money);
-                ImVec2 ts=ImGui::CalcTextSize(mbuf);
+                ImFont* infoFont = espFont;
+                float infoSize = 12.f * s;
+                ImVec2 ts=infoFont->CalcTextSizeA(infoSize, FLT_MAX, 0.f, mbuf);
                 float sw=(float)g_esp_screen_w;
-                float tx = (g_espMoneyPos==1) ? (sw - ts.x - 12.f) : (cx-ts.x*0.5f);
+                float tx = (g_espMoneyPos==1) ? (sw - ts.x - 12.f * s) : (cx-ts.x*0.5f);
                 float ty = (g_espMoneyPos==1) ? (bt2 + bh*0.5f - ts.y*0.5f) : belowY;
-                dl->AddText({tx+1.f,ty+1.f},IM_COL32(0,0,0,(int)(140*alpha)),mbuf);
-                dl->AddText({tx,ty},IM_COL32(120,220,120,(int)(220*alpha)),mbuf);
-                if(g_espMoneyPos==0) belowY += ts.y + 2.f;
+                dl->AddText(infoFont, infoSize, {tx+1.f,ty+1.f},IM_COL32(0,0,0,(int)(140*alpha)),mbuf);
+                dl->AddText(infoFont, infoSize, {tx,ty},IM_COL32(120,220,120,(int)(220*alpha)),mbuf);
+                if(g_espMoneyPos==0) belowY += ts.y + 2.f * s;
             }
         }
         if(g_espDist){
             char dbuf[32];snprintf(dbuf,sizeof(dbuf),"%.0fm",e.distance);
-            ImVec2 ts=ImGui::CalcTextSize(dbuf);float tx=cx-ts.x*0.5f;
-            dl->AddText({tx+1.f,belowY+1.f},IM_COL32(0,0,0,(int)(130*alpha)),dbuf);
-            dl->AddText({tx,belowY},dimCol,dbuf);
-            belowY += ts.y + 2.f;
+            ImFont* infoFont = espFont;
+            float infoSize = 12.f * s;
+            ImVec2 ts=infoFont->CalcTextSizeA(infoSize, FLT_MAX, 0.f, dbuf);float tx=cx-ts.x*0.5f;
+            dl->AddText(infoFont, infoSize, {tx+1.f,belowY+1.f},IM_COL32(0,0,0,(int)(130*alpha)),dbuf);
+            dl->AddText(infoFont, infoSize, {tx,belowY},dimCol,dbuf);
+            belowY += ts.y + 2.f * s;
         }
         if(g_espSpotted&&e.spotted){
             dl->AddCircleFilled({br+6.f,bt2+6.f},3.f,IM_COL32(90,220,130,(int)(200*alpha)));
@@ -4153,7 +4536,7 @@ static void DrawRadar(){
         ImVec2 p{center.x+rx,center.y+ry};
         dl->AddCircleFilled(p,rad,col,12);
         if(e.name[0]){
-            ImFont* f = ImGui::GetFont();
+            ImFont* f = GetEspFont();
             dl->AddText(f,9.f,{p.x+4.f,p.y-4.f},IM_COL32(200,200,220,200),e.name);
         }
     }
@@ -4206,12 +4589,16 @@ static void InitImGui(IDXGISwapChain*sc){
     font::lexend_bold = io.Fonts->AddFontFromMemoryTTF((void*)lexend_bold, (int)sizeof(lexend_bold), 17.f, &fc, io.Fonts->GetGlyphRangesCyrillic());
     fc.SizePixels=14.f;
     font::lexend_regular = io.Fonts->AddFontFromMemoryTTF((void*)lexend_regular, (int)sizeof(lexend_regular), 14.f, &fc, io.Fonts->GetGlyphRangesCyrillic());
+    font::esp_mono = io.Fonts->AddFontFromMemoryTTF((void*)jetbrains_mono_regular, (int)sizeof(jetbrains_mono_regular), 14.f, &fc, io.Fonts->GetGlyphRangesCyrillic());
     fc.SizePixels=20.f;
     font::icomoon = io.Fonts->AddFontFromMemoryTTF((void*)icomoon, (int)sizeof(icomoon), 20.f, &fc, io.Fonts->GetGlyphRangesDefault());
     fc.SizePixels=15.f;
     font::icomoon_widget = io.Fonts->AddFontFromMemoryTTF((void*)icomoon_widget, (int)sizeof(icomoon_widget), 15.f, &fc, io.Fonts->GetGlyphRangesDefault());
-    // CS2GunIcons disabled - causes crash. Weapon icon uses text fallback (AK, M4, etc.)
-    // font::gun_icons stays nullptr
+    static const ImWchar gunRanges[] = { 0xE000, 0xE0FF, 0 };
+    ImFontConfig gunCfg = fc;
+    gunCfg.SizePixels = 16.f;
+    gunCfg.PixelSnapH = true;
+    font::gun_icons = io.Fonts->AddFontFromMemoryTTF((void*)cs2_gun_icons_ttf, (int)sizeof(cs2_gun_icons_ttf), 16.f, &gunCfg, gunRanges);
     ImFont* font = font::lexend_bold;
     if(!font) font = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 16.f, &fc, io.Fonts->GetGlyphRangesCyrillic());
     if(!font) font = io.Fonts->AddFontDefault(&fc);
@@ -4311,7 +4698,7 @@ static void RenderFrame(IDXGISwapChain*sc){
     if(GetAsyncKeyState(VK_END)&1){RequestUnload();return;}
     if(!g_safeMode){
         BuildESPData();BuildSpectatorList();ProcessHitEvents();UpdateBombInfo();UpdateSoundPings();
-        RunNoFlash();RunNoSmoke();RunGlow();RunRadarHack();RunBHop();RunFOVChanger();
+        RunNoFlash();RunNoSmoke();RunGlow();RunRadarHack();RunSkinChanger();RunBHop();RunFOVChanger();
         RunAutostop();RunRCS();RunStrafeHelper();RunTriggerBot();ReleaseTriggerAttack();RunAimbot();RunDoubleTap();
     }else{g_esp_count=0;g_esp_oof_count=0;}
     ImGui_ImplDX11_NewFrame();ImGui_ImplWin32_NewFrame();ImGui::NewFrame();

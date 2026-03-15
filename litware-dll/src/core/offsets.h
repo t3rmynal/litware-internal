@@ -166,12 +166,23 @@ namespace offsets {
     // -- C_EconEntity / C_AttributeContainer / C_EconItemView --
     namespace econ_entity {
         constexpr uintptr_t m_AttributeManager = 0x1378;
+        constexpr uintptr_t m_OriginalOwnerXuidLow = 0x1848;
+        constexpr uintptr_t m_nFallbackPaintKit = 0x1850;
+        constexpr uintptr_t m_nFallbackSeed = 0x1854;
+        constexpr uintptr_t m_flFallbackWear = 0x1858;
+        constexpr uintptr_t m_nFallbackStatTrak = 0x185C;
     }
     namespace attribute_container {
         constexpr uintptr_t m_Item = 0x50;
     }
     namespace econ_item_view {
         constexpr uintptr_t m_iItemDefinitionIndex = 0x1BA;
+        constexpr uintptr_t m_iItemIDHigh = 0x1D0;
+        constexpr uintptr_t m_iItemIDLow = 0x1D4;
+        constexpr uintptr_t m_iAccountID = 0x1D8;
+        constexpr uintptr_t m_iEntityQuality = 0x1BC;
+        constexpr uintptr_t m_bInitialized = 0x1E8;
+        constexpr uintptr_t m_AttributeList = 0x208;
     }
 
     // -- C_PlantedC4 --
