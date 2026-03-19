@@ -98,13 +98,14 @@ static void ServerThread() {
         BootstrapLog("[bridge] electron connected");
         s_clientSocket = client;
 
-        // шлём начальное состояние (overlay_visible только если cs2 реально в фокусе)
+        // шлём начальное состояние
         {
             char msg[64];
             int msglen = snprintf(msg, sizeof(msg), "{\"key\":\"menu_open\",\"value\":%s}", s_menuOpenState.load() ? "true" : "false");
             SendLine(client, msg, msglen);
-            // overlay_visible шлём только если pending уже стоит true (gameFocused)
-            // иначе render_hook сам пошлёт через ElectronBridge_SendVisibility
+            // cs2 в фокусе при инъекте — показываем overlay
+            msglen = snprintf(msg, sizeof(msg), "{\"key\":\"overlay_visible\",\"value\":true}");
+            SendLine(client, msg, msglen);
             if (s_hasNotif.load()) {
                 char notifMsg[640];
                 msglen = snprintf(notifMsg, sizeof(notifMsg), "{\"key\":\"notification\",\"value\":\"%s\"}", s_notifBuf);

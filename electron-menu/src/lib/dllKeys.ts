@@ -8,7 +8,6 @@ declare global {
     litware?: {
       send: (key: string, value: unknown) => void
       on: (cb: (key: string, value: unknown) => void) => () => void
-      connect: () => void
     }
   }
 }

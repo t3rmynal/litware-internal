@@ -3751,6 +3751,8 @@ static void RenderFrame(IDXGISwapChain*sc){
         g_menuOpen=!g_menuOpen;
         if(g_menuOpen && !g_menuLaunched){ g_menuLaunched=true; ElectronBridge_LaunchMenu(); }
         ElectronBridge_SendMenuOpen(g_menuOpen);
+        // фокус на electron — SetForegroundWindow работает т.к. вызываем из cs2
+        if(g_menuOpen) ElectronBridge_BringToFront();
     }
     // F1 keybinds popup disabled
     if(GetAsyncKeyState(VK_END)&1){RequestUnload();return;}
