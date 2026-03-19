@@ -16,20 +16,23 @@ export default function App() {
   const accent  = useStore(s => s.accentColor)
   const opacity = useStore(s => s.settings.menuOpacity)
   const [menuOpen, setMenuOpen] = useState(import.meta.env.DEV)
+  const [cs2Focused, setCs2Focused] = useState(true)
 
-  // dll шлёт menu_open по websocket
+  // dll шлёт menu_open и cs2_focused по websocket / ipc
   useEffect(() => {
     const litware = (window as any).litware as { on: (cb: (key: string, value: unknown) => void) => () => void } | undefined
     if (!litware?.on) return
     const unsub = litware.on((key, value) => {
-      if (key !== 'menu_open') return
-      const open = value === true || value === 'true'
-      setMenuOpen(open)
-      // сообщаем main process чтобы переключил ignoreMouseEvents
-      if (open) {
-        ;(window as any).electron?.showWindow?.()
-      } else {
-        ;(window as any).electron?.hideWindow?.()
+      if (key === 'menu_open') {
+        const open = value === true || value === 'true'
+        setMenuOpen(open)
+        if (open) {
+          ;(window as any).electron?.showWindow?.()
+        } else {
+          ;(window as any).electron?.hideWindow?.()
+        }
+      } else if (key === 'cs2_focused') {
+        setCs2Focused(value === true || value === 'true')
       }
     })
     return unsub
@@ -46,7 +49,7 @@ export default function App() {
 
   return (
     <div style={{ width: '100vw', height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent' }}>
-      <HudOverlays />
+      {cs2Focused && <HudOverlays />}
       <ToastList />
       <AnimatePresence>
         {menuOpen && (

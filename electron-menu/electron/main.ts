@@ -1,13 +1,17 @@
 import { app, BrowserWindow, ipcMain, screen } from 'electron'
 import { join } from 'path'
+import * as net from 'net'
 
 let win: BrowserWindow | null = null
 let menuOpen = false
 let quitTimer: ReturnType<typeof setTimeout> | null = null
-let hasConnectedOnce = false
-let bridgeHasConnectedOnce = false
+let tcpSocket: net.Socket | null = null
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 
 const isDev = !app.isPackaged
+const TCP_PORT = 37373
+const RECONNECT_DELAY = 3000
+const QUIT_DELAY = 8000
 
 function createWindow() {
   const { bounds } = screen.getPrimaryDisplay()
@@ -23,7 +27,7 @@ function createWindow() {
     alwaysOnTop: true,
     resizable: false,
     focusable: true,
-    show: false,
+    show: true,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -32,11 +36,7 @@ function createWindow() {
   })
 
   win.setAlwaysOnTop(true, 'screen-saver')
-  // по умолчанию клики проходят насквозь в cs2
   win.setIgnoreMouseEvents(true, { forward: true })
-
-  // показываем только когда cs2 стал активным (overlay_visible: true от dll)
-  // до первого подключения — скрыты
 
   if (isDev) {
     win.loadURL('http://localhost:5173')
@@ -47,28 +47,98 @@ function createWindow() {
   win.on('closed', () => { win = null })
 }
 
-// переключаем меню — C++ шлёт menu_open через WebSocket, preload → menu-visibility
 function toggleMenu(open: boolean) {
   if (!win) return
   menuOpen = open
-  // сообщаем react про новое состояние
   win.webContents.send('toggle-menu', open)
   if (open) {
     win.setIgnoreMouseEvents(false)
     win.setAlwaysOnTop(true, 'screen-saver')
-    win.moveTop()
     win.focus()
   } else {
     win.setIgnoreMouseEvents(true, { forward: true })
   }
 }
 
+function tcpSend(key: string, value: unknown) {
+  if (tcpSocket?.writable) {
+    tcpSocket.write(JSON.stringify({ key, value }) + '\n')
+  }
+}
+
+function handleDllMessage(key: string, value: unknown) {
+  if (!win) return
+  if (key === 'menu_open') {
+    toggleMenu(value === true || value === 'true')
+  } else if (key === 'overlay_visible') {
+    const visible = value === true || value === 'true'
+    if (!visible) {
+      if (menuOpen) toggleMenu(false)
+      win.webContents.send('cs2-focused', false)
+      win.hide()
+    } else {
+      win.show()
+      win.webContents.send('cs2-focused', true)
+    }
+  } else if (key === 'notification') {
+    // пробрасываем в renderer
+    win.webContents.send('dll-notification', value)
+    win.show()
+  } else {
+    // остальные ключи (настройки) → renderer
+    win.webContents.send('dll-key', key, value)
+  }
+}
+
+function tcpConnect() {
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
+
+  const sock = new net.Socket()
+  tcpSocket = sock
+
+  let buf = ''
+
+  sock.connect(TCP_PORT, '127.0.0.1', () => {
+    console.log('[bridge] подключились к dll')
+    if (quitTimer) { clearTimeout(quitTimer); quitTimer = null }
+    // overlay_visible от dll покажет окно — здесь только снимаем таймер выхода
+  })
+
+  sock.on('data', (data) => {
+    buf += data.toString()
+    const lines = buf.split('\n')
+    buf = lines.pop() ?? ''
+    for (const line of lines) {
+      const trimmed = line.trim()
+      if (!trimmed) continue
+      try {
+        const { key, value } = JSON.parse(trimmed)
+        handleDllMessage(key, value)
+      } catch {
+        console.warn('[bridge] parse error:', trimmed)
+      }
+    }
+  })
+
+  sock.on('close', () => {
+    tcpSocket = null
+    console.log('[bridge] соединение закрыто')
+    if (!quitTimer) {
+      quitTimer = setTimeout(() => { quitTimer = null; app.quit() }, QUIT_DELAY)
+    }
+    reconnectTimer = setTimeout(tcpConnect, RECONNECT_DELAY)
+  })
+
+  sock.on('error', (err) => {
+    console.log('[bridge] ошибка:', err.message)
+  })
+}
+
 app.whenReady().then(() => {
   createWindow()
 
-  // INSERT обрабатывает только C++ (render_hook), шлёт menu_open через WebSocket
-  // Electron получает через preload -> menu-visibility IPC
-  // globalShortcut не используем — двойной toggle ломал закрытие
+  // подключаемся к dll tcp серверу
+  tcpConnect()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -79,23 +149,12 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
-// cs2 закрыт — WebSocket разорван; если не переподключились за 5 сек — выходим
-const BRIDGE_QUIT_DELAY_MS = 5000
-ipcMain.on('bridge-disconnected', () => {
-  if (quitTimer) clearTimeout(quitTimer)
-  quitTimer = setTimeout(() => {
-    quitTimer = null
-    app.quit()
-  }, BRIDGE_QUIT_DELAY_MS)
-})
-ipcMain.on('bridge-connected', () => {
-  if (quitTimer) {
-    clearTimeout(quitTimer)
-    quitTimer = null
-  }
+// renderer хочет отправить что-то в dll
+ipcMain.on('send-to-dll', (_, key: string, value: unknown) => {
+  tcpSend(key, value)
 })
 
-// перемещение окна через драг
+// перемещение окна
 ipcMain.on('window-move', (_, { dx, dy }: { dx: number; dy: number }) => {
   if (!win) return
   const [cx, cy] = win.getPosition()
@@ -103,42 +162,15 @@ ipcMain.on('window-move', (_, { dx, dy }: { dx: number; dy: number }) => {
 })
 
 ipcMain.on('window-close', () => {
-  if (isDev) {
-    toggleMenu(false)
-  } else {
-    app.quit()
-  }
+  if (isDev) toggleMenu(false)
+  else app.quit()
 })
 
 ipcMain.on('window-minimize', () => {
   win?.minimize()
 })
 
-// dll шлёт menu_open через websocket -> preload -> ipc
-// (запасной путь если globalShortcut не сработал)
+// renderer просит показать/скрыть меню (fallback)
 ipcMain.on('menu-visibility', (_, open: boolean) => {
   toggleMenu(open)
-})
-
-// уведомление — показываем overlay если был скрыт
-ipcMain.on('toast-notify', () => {
-  if (!win) return
-  win.show()
-  win.setAlwaysOnTop(true, 'screen-saver')
-  win.moveTop()
-})
-
-// c++ шлёт overlay_visible когда cs2 теряет/получает фокус
-ipcMain.on('overlay-visible', (_, visible: boolean) => {
-  if (!win) return
-  if (!visible) {
-    // cs2 alt-tabbed — скрываем overlay
-    if (menuOpen) toggleMenu(false)
-    win.hide()
-  } else {
-    // cs2 снова в фокусе — показываем
-    win.show()
-    win.setAlwaysOnTop(true, 'screen-saver')
-    win.moveTop()
-  }
 })
