@@ -3,12 +3,12 @@
 #include <cmath>
 #include "entity.h"
 
-// WorldToScreen for CS2: matrix row-major (ViewMatrix[row][col])
-// Format as in pidoraise/Source 2
+// ???????????
+// ???????????
 inline bool WorldToScreen(const float* m, const Vec3& pos,
                           int screenW, int screenH,
                           float& outX, float& outY) {
-    // w = row3 . pos
+    // ???????????
     float w = m[12] * pos.x + m[13] * pos.y + m[14] * pos.z + m[15];
     if (w < 0.001f)
         return false;

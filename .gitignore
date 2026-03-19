@@ -34,3 +34,14 @@ offsets/output/
 offsets/*.log
 old/
 examples-old/
+*.tmp
+litware-menu.exe
+
+# електрон
+node_modules/
+electron-menu/node_modules/
+electron-menu/dist/
+electron-menu/out/
+*.npm
+.npm
+package-lock.json.bak

@@ -20,7 +20,7 @@ void ClearDebugLogs() {
     g_logs.clear();
 }
 
-// Always-on: helps diagnose injection failure (Release builds)
+// ???????????
 void BootstrapLog(const char* fmt, ...) {
     char buf[1024];
     va_list args;

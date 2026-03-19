@@ -62,7 +62,7 @@ namespace globals {
     bool g_weaponChamsEnabled = false;
     float g_weaponChamsCol[4]{1.f,0.88f,0.35f,1.f};
     bool g_aimbotEnabled = false;
-    int g_aimbotKey = 1; // VK_LBUTTON
+    int g_aimbotKey = 1; // ???????????
     float g_aimbotFov = 5.f;
     float g_aimbotSmooth = 6.f;
     bool g_fovCircleEnabled = false;
@@ -136,8 +136,8 @@ namespace globals {
     bool g_soundBlipEnemy = true;
     bool g_soundBlipTeam = false;
     float g_soundBlipCol[4]{1.f, 0.f, 0.f, 1.f};
-    float g_accentColor[4]{0.1f,0.55f,1.0f,1.0f};
-    float g_menuOpacity = 0.96f;
+    float g_accentColor[4]{0.86f, 0.86f, 0.88f, 1.0f};
+    float g_menuOpacity = 0.98f;
     float g_uiScale = 1.00f;
     int g_menuTheme = 0;
     float g_themeTransition = 0.f;

@@ -1,7 +1,7 @@
 #pragma once
 #include <cstdint>
 
-// game state, filled each frame
+// ???????????
 struct GameState {
     bool bombActive = false;
     int bombSite = -1;

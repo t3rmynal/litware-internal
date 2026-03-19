@@ -1,6 +1,7 @@
 #include "entry.h"
 #include "bypass.h"
 #include "hooks/render_hook.h"
+#include "core/electron_bridge.h"
 #include "debug.h"
 #include <Windows.h>
 
@@ -8,7 +9,7 @@ void entry() {
     BootstrapLog("[litware] entry() start");
     DebugLog("[litware] entry() start");
 
-    // Wait for game to be ready (main menu) - injectors often run before Steam overlay loads
+    // ждём overlay renderer (steam)
     for (int i = 0; i < 50; ++i) {
         if (GetModuleHandleA("gameoverlayrenderer64.dll") != nullptr)
             break;
@@ -19,6 +20,7 @@ void entry() {
         BootstrapLog("[litware] bypass::Initialize failed (non-fatal)");
         DebugLog("[litware] bypass::Initialize failed (non-fatal)");
     }
+
     for (int attempt = 0; attempt < 3; ++attempt) {
         if (render_hook::Initialize()) break;
         BootstrapLog("[litware] render_hook attempt %d failed, retry in 3s", attempt + 1);
@@ -29,7 +31,15 @@ void entry() {
             return;
         }
     }
+
     BootstrapLog("[litware] SUCCESS - hook active, INSERT for menu");
     DebugLog("[litware] render_hook::Initialize OK - hook active");
+
+    // уведомление в electron после успешного инита
+    ElectronBridge_SendNotification("Cheat injected successfully! Enjoy.");
+    // даём electron секунду подключиться к ws, потом поднимаем для тоста
+    Sleep(1000);
+    ElectronBridge_BringToFront();
+
     bypass::PatchSecureServerFlag();
 }

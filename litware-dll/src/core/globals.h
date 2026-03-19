@@ -3,7 +3,7 @@
 #include <vector>
 #include "entity.h"
 
-// Forward declaration
+// ???????????
 struct CSPlayerPawn;
 
 namespace globals {
@@ -29,13 +29,13 @@ namespace globals {
         bool hasBomb;
         bool hasKits;
         
-        // Weapon info
+        // ???????????
         uintptr_t activeWeapon;
     };
 
     extern std::vector<ESPPlayer> espPlayers;
     
-    // Configs extracted from render_hook.cpp
+    // ???????????
     extern bool g_espEnabled;
     extern bool g_espOnlyVis;
     extern int g_espBoxStyle;

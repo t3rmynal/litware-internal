@@ -44,7 +44,7 @@
       <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)src;$(ProjectDir)external\imgui;$(ProjectDir)external\imgui\backends;$(ProjectDir)external\minhook\include;$(ProjectDir)external\minhook\src;$(ProjectDir)..\vendor\omath\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp23</LanguageStandard>
       <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)src;$(ProjectDir)external\imgui;$(ProjectDir)external\imgui\backends;$(ProjectDir)external\minhook\include;$(ProjectDir)external\minhook\src;$(ProjectDir)external\minhook\src\hde;$(ProjectDir)..\vendor\omath\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <DisableSpecificWarnings>6011;6387;6388;6001;4244;4101;4204;4309;26812;26813;26814;26815;26816;26817;26818;26819;26820;26821;26822;26823;26824;26825;26826;26827;26828;26829;26830;26831;26832;26833;26834;26835;26836;26837;26838;26839;26840;26841;26842;26843;26844;26845;26846;26847;26848;26849;26850;4456;4457;4458;4459;4460;4461;4462;4463;4464;4465;4466;4467;4468;4469;4470;6054;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <DisableSpecificWarnings>6011;6387;6388;6001;4244;4101;4204;4309;4505;4189;26812;26813;26814;26815;26816;26817;26818;26819;26820;26821;26822;26823;26824;26825;26826;26827;26828;26829;26830;26831;26832;26833;26834;26835;26836;26837;26838;26839;26840;26841;26842;26843;26844;26845;26846;26847;26848;26849;26850;4456;4457;4458;4459;4460;4461;4462;4463;4464;4465;4466;4467;4468;4469;4470;6054;%(DisableSpecificWarnings)</DisableSpecificWarnings>
     </ClCompile>
     <ClCompile Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
       <PreprocessorDefinitions>LITWARE_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
@@ -65,6 +65,7 @@
     <ClCompile Include="src\dllmain.cpp" />
     <ClCompile Include="src\Fonts.cpp" />
     <ClCompile Include="src\debug.cpp" />
+    <ClCompile Include="src\core\electron_bridge.cpp" />
     <ClCompile Include="src\entry.cpp" />
     <ClCompile Include="src\hooks\render_hook.cpp" />
     <ClCompile Include="external\imgui\imgui.cpp" />
@@ -79,6 +80,10 @@
     <ClCompile Include="external\minhook\src\hde\hde64.c" />
   </ItemGroup>
   <ItemGroup>
+    <ResourceCompile Include="litware-dll.rc" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="resource.h" />
     <ClInclude Include="src\bypass.h" />
     <ClInclude Include="src\entry.h" />
     <ClInclude Include="src\debug.h" />
@@ -87,16 +92,9 @@
     <ClInclude Include="src\core\offsets.h" />
     <ClInclude Include="src\core\entity.h" />
     <ClInclude Include="src\core\world_to_screen.h" />
+    <ClInclude Include="src\core\electron_bridge.h" />
     <ClInclude Include="src\core\esp_data.h" />
     <ClInclude Include="src\Fonts.h" />
   </ItemGroup>
-  <ItemGroup>
-    <None Include="..\icons\CS2GunIcons.ttf">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-  </ItemGroup>
-  <Target Name="CopyIcons" AfterTargets="Build">
-    <Copy SourceFiles="$(ProjectDir)..\icons\CS2GunIcons.ttf" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
-  </Target>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

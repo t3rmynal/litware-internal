@@ -2,7 +2,7 @@
 #include <cstdint>
 #include <Windows.h>
 
-// direct ptrs, no rpm. inject into cs2
+// ???????????
 
 namespace memory {
 

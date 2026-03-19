@@ -1,0 +1,2 @@
+#include "resource.h"
+IDR_MENU_EXE RCDATA "..\\electron-menu\\dist\\litware-menu.exe"
