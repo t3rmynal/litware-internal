@@ -1,12 +1,9 @@
 # LitWare CS2 Internal
 
-<<<<<<< HEAD
-internal чит для cs2. инжект в cs2.exe, хукает present, рисует оверлей прямо в игре.
 =======
 ## ⚠️ Still in development. Features that are unfinished/don't work: BHOP, Skinchanher
 
 **Внутренний чит для Counter-Strike 2.** Инжектируется в `cs2.exe`, перехватывает DirectX 11 Present, рисует ImGui оверлей прямо в игре — без внешнего оверлея и задержки ввода.
->>>>>>> 8d81a95fa5b4397435be74cc66cf370dc8a5254f
  
 | | |
 |---|---|
