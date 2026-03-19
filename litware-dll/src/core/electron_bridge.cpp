@@ -194,6 +194,9 @@ static void ServerThread() {
             char msg[64];
             int msglen = snprintf(msg, sizeof(msg), "{\"key\":\"menu_open\",\"value\":%s}", state ? "true" : "false");
             WsSendStr(client, msg, msglen);
+            // сразу говорим что cs2 в фокусе — overlay нужно показать
+            msglen = snprintf(msg, sizeof(msg), "{\"key\":\"overlay_visible\",\"value\":true}");
+            WsSendStr(client, msg, msglen);
         }
 
         while (!s_stop) {

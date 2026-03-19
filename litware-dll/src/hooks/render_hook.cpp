@@ -3652,8 +3652,8 @@ static void InitImGui(IDXGISwapChain*sc){
         return;
     }
     g_imguiInitialized=true;DebugLog("[LitWare] ImGui OK");
+    g_menuLaunched=true; // electron запущен из entry.cpp заранее
     ElectronBridge_SetApply(ApplyConfigKeyFromElectron);
-    if(!g_menuLaunched){ g_menuLaunched=true; ElectronBridge_LaunchMenu(); }
 }
 
 static bool g_firstFrame=false;

@@ -23,7 +23,7 @@ function createWindow() {
     alwaysOnTop: true,
     resizable: false,
     focusable: true,
-    show: true,
+    show: false,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -34,6 +34,9 @@ function createWindow() {
   win.setAlwaysOnTop(true, 'screen-saver')
   // по умолчанию клики проходят насквозь в cs2
   win.setIgnoreMouseEvents(true, { forward: true })
+
+  // показываем только когда cs2 стал активным (overlay_visible: true от dll)
+  // до первого подключения — скрыты
 
   if (isDev) {
     win.loadURL('http://localhost:5173')
@@ -117,9 +120,10 @@ ipcMain.on('menu-visibility', (_, open: boolean) => {
   toggleMenu(open)
 })
 
-// уведомление — показываем overlay без фокуса
+// уведомление — показываем overlay если был скрыт
 ipcMain.on('toast-notify', () => {
   if (!win) return
+  win.show()
   win.setAlwaysOnTop(true, 'screen-saver')
   win.moveTop()
 })
