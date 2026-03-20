@@ -30,7 +30,8 @@ x86/
 Thumbs.db
 Desktop.ini
 txt.txt
-offsets/output/
+offsets/output/*
+!offsets/output/README.md
 offsets/*.log
 old/
 examples-old/
