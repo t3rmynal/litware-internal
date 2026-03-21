@@ -4,8 +4,8 @@
 
 namespace font
 {
-	ImFont* lexend_bold = nullptr;
-	ImFont* lexend_regular = nullptr;
+	ImFont* bold    = nullptr;
+	ImFont* regular = nullptr;
 	ImFont* esp_mono = nullptr;
 	ImFont* icomoon = nullptr;
 	ImFont* icomoon_widget = nullptr;

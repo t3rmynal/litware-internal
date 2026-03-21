@@ -8,6 +8,7 @@
 #include "../core/world_to_screen.h"
 #include "../core/esp_data.h"
 #include "../debug.h"
+#include "../modules/third_person.h"
 #include <MinHook.h>
 #include <d3d11.h>
 #include <dxgi.h>
@@ -158,6 +159,7 @@ static float g_aimbotSmooth = 15.1f;
 static bool g_fovCircleEnabled = false;
 static float g_fovCircleCol[4]{0.4f,0.7f,1.f,0.5f};  // R,G,B,A for FOV circle
 static bool g_aimbotTeamChk = true;
+static bool g_aimbotVisCheck = true;   // only aim at spotted targets
 static int g_aimbotBone = 0;
 static int g_aimbotWeaponFilter = 0;  // 0=All 1=Rifles 2=Snipers 3=Pistols
 static bool g_rcsEnabled = false;
@@ -180,9 +182,9 @@ static int g_dtKey = 0;
 static bool g_bhopEnabled = false;
 static bool g_strafeEnabled = false;
 static int g_strafeKey = 0;
-static bool g_antiAimEnabled = false;
-static int g_antiAimType = 0;  // 0=spin, 1=desync, 2=jitter
-static float g_antiAimSpeed = 180.f;
+// Anti-aim, edge jump, autopeek removed
+static bool g_nightModeOverlay = false;  // dark fullscreen overlay (ImGui layer)
+static bool g_hitmarkerWasHeadshot = false;  // last hit was headshot (for gold color)
 static bool g_fovEnabled = false;
 static float g_fovValue = 121.f;
 static bool g_thirdPerson = false;
@@ -206,6 +208,12 @@ static bool g_skyColorEnabled = false;
 static float g_skyColor[4]{0.225259f,0.192963f,0.693548f,1.f};
 static bool g_skyNightMode = false;
 static float g_skyNightStrength = 0.65f;  // lerp toward dark night tint (0–1)
+// World fog (C_GradientFog entity manipulation)
+static bool g_worldFogEnabled = false;
+static float g_worldFogColor[4]{0.04f, 0.05f, 0.08f, 1.f};  // dark night default
+static float g_worldFogStrength = 1.8f;
+static uintptr_t g_fogEntityPtr = 0;  // cached fog entity
+static UINT64 g_fogEntityScanTick = 0;
 static bool g_watermarkEnabled = true;
 static bool g_showFpsWatermark = true;
 static bool g_spectatorListEnabled = false;
@@ -253,14 +261,13 @@ static float g_soundBlipCol[4]{0.f, 0.419355f, 1.f, 1.f};
 static float g_accentColor[4]{0.1f,0.55f,1.0f,1.0f};
 static float g_menuOpacity = 0.96f;
 static float g_uiScale = 1.00f;  // Default UI scale
-static int g_activeTab = 0;  // 0-4: Aimbot, Visuals, World, Skins, Misc
+static int g_activeTab = 0;  // 0-3: Aimbot, Visuals, World, Misc
 static float g_tabAnim[8] = {};
 static float g_tabIndicatorY = 0.f;
 static bool g_keybindsEnabled = false;
 static bool g_keybindsWindowOpen = false;
 static float g_menuAnim = 0.f;
 static float g_menuAnimSpeed = 12.f;
-static UINT64 g_telegramNoteStart = 0;  // Telegram notice: 5s on load
 
 // Skins
 struct SkinOverride{
@@ -338,7 +345,10 @@ static bool g_seenThisFrame[ESP_MAX_PLAYERS + 1] = {};
 
 struct LogEntry{char text[256];ImU32 color;float lifetime,maxlife;int type;};  // type: 0=hit 1=kill
 static std::deque<LogEntry>g_logs;
-struct DamageFloater{ int damage; UINT64 spawnMs; float ax, ay; float duration; };
+struct DamageFloater{ int damage; UINT64 spawnMs; float ax, ay; float duration;
+    float wx, wy, wz;   // world position for 3D projection
+    float randOffX;     // random x spread
+};
 static std::deque<DamageFloater> g_damageFloaters;
 static DWORD g_lastSoundPingTick[ESP_MAX_PLAYERS + 1] = {};
 static bool g_visMap[ESP_MAX_PLAYERS + 1] = {};
@@ -642,7 +652,7 @@ static void WCharToUtf8(ImWchar c, char out[5]){
 
 static ImFont* GetEspFont(){
     if(font::esp_mono) return font::esp_mono;
-    if(font::lexend_regular) return font::lexend_regular;
+    if(font::regular) return font::regular;
     return ImGui::GetFont();
 }
 
@@ -993,6 +1003,8 @@ static bool LoadConfigKeyAimbot(const std::string& key, const std::string& val, 
     if(key=="fov_circle"){ g_fovCircleEnabled=ParseBool(val); return true; }
     if(key=="fov_circle_col"){ if(!ParseColor4(val,g_fovCircleCol)) ok=false; return true; }
     if(key=="aimbot_team"){ g_aimbotTeamChk=ParseBool(val); return true; }
+    if(key=="aimbot_vis"){ g_aimbotVisCheck=ParseBool(val); return true; }
+    // auto_fire removed
     if(key=="aimbot_bone"){ int v; if(ParseInt(val,v)) g_aimbotBone=v; else ok=false; return true; }
     if(key=="rcs_enabled"){ g_rcsEnabled=ParseBool(val); return true; }
     if(key=="rcs_x"){ float v; if(ParseFloat(val,v)){ g_rcsX=v; rcsXSet=true; } else ok=false; return true; }
@@ -1011,9 +1023,8 @@ static bool LoadConfigKeyMovement(const std::string& key, const std::string& val
     if(key=="bhop"){ g_bhopEnabled=ParseBool(val); return true; }
     if(key=="strafe_enabled"){ g_strafeEnabled=ParseBool(val); return true; }
     if(key=="strafe_key"){ int v; if(ParseInt(val,v)) g_strafeKey=v; else ok=false; return true; }
-    if(key=="anti_aim_enabled"){ g_antiAimEnabled=ParseBool(val); return true; }
-    if(key=="anti_aim_type"){ int v; if(ParseInt(val,v)) g_antiAimType=v; else ok=false; return true; }
-    if(key=="anti_aim_speed"){ float v; if(ParseFloat(val,v)) g_antiAimSpeed=v; else ok=false; return true; }
+    // anti-aim, edge jump, autopeek config keys removed
+    if(key=="night_mode_overlay"){ g_nightModeOverlay=ParseBool(val); return true; }
     if(key=="fov_enabled"){ g_fovEnabled=ParseBool(val); return true; }
     if(key=="fov_value"){ float v; if(ParseFloat(val,v)) g_fovValue=v; else ok=false; return true; }
     if(key=="third_person"){ g_thirdPerson=ParseBool(val); return true; }
@@ -1040,6 +1051,9 @@ static bool LoadConfigKeyVisual(const std::string& key, const std::string& val, 
     if(key=="sky_color"){ if(!ParseColor4(val,g_skyColor)) ok=false; return true; }
     if(key=="sky_night_mode"){ g_skyNightMode=ParseBool(val); return true; }
     if(key=="sky_night_strength"){ float v; if(ParseFloat(val,v)) g_skyNightStrength=v; else ok=false; return true; }
+    if(key=="world_fog"){ g_worldFogEnabled=ParseBool(val); return true; }
+    if(key=="world_fog_col"){ if(!ParseColor4(val,g_worldFogColor)) ok=false; return true; }
+    if(key=="world_fog_strength"){ float v; if(ParseFloat(val,v)) g_worldFogStrength=v; else ok=false; return true; }
     if(key=="damage_floaters"){ g_damageFloatersEnabled=ParseBool(val); return true; }
     if(key=="damage_floater_duration"){ float v; if(ParseFloat(val,v)) g_damageFloaterDuration=v; else ok=false; return true; }
     if(key=="damage_floater_scale"){ float v; if(ParseFloat(val,v)) g_damageFloaterScale=v; else ok=false; return true; }
@@ -1157,6 +1171,7 @@ static void ApplyDefaults(){
     g_fovCircleEnabled = false;
     g_fovCircleCol[0]=0.4f; g_fovCircleCol[1]=0.7f; g_fovCircleCol[2]=1.f; g_fovCircleCol[3]=0.5f;
     g_aimbotTeamChk = true;
+    g_aimbotVisCheck = true;
     g_aimbotBone = 0;
     g_rcsEnabled = false;
     g_rcsX = 1.0f;
@@ -1171,9 +1186,8 @@ static void ApplyDefaults(){
     g_bhopEnabled = false;
     g_strafeEnabled = false;
     g_strafeKey = 0;
-    g_antiAimEnabled = false;
-    g_antiAimType = 0;
-    g_antiAimSpeed = 180.f;
+    // anti-aim, edge jump, autopeek defaults removed
+    g_nightModeOverlay = false;
     g_fovEnabled = false;
     g_fovValue = 90.f;
     g_thirdPerson = false;
@@ -1195,6 +1209,9 @@ static void ApplyDefaults(){
     g_skyColor[0]=0.4f; g_skyColor[1]=0.5f; g_skyColor[2]=0.8f; g_skyColor[3]=1.f;
     g_skyNightMode = false;
     g_skyNightStrength = 0.65f;
+    g_worldFogEnabled = false;
+    g_worldFogColor[0]=0.04f; g_worldFogColor[1]=0.05f; g_worldFogColor[2]=0.08f; g_worldFogColor[3]=1.f;
+    g_worldFogStrength = 1.8f;
     g_damageFloatersEnabled = true;
     g_damageFloaterDuration = 0.85f;
     g_damageFloaterScale = 1.f;
@@ -1305,6 +1322,8 @@ static bool SaveConfig(const char* name){
     WriteFloat(out, "aimbot_fov", g_aimbotFov);
     WriteFloat(out, "aimbot_smooth", g_aimbotSmooth);
     WriteBool(out, "aimbot_team", g_aimbotTeamChk);
+    WriteBool(out, "aimbot_vis", g_aimbotVisCheck);
+
     WriteInt(out, "aimbot_bone", g_aimbotBone);
     WriteBool(out, "rcs_enabled", g_rcsEnabled);
     WriteFloat(out, "rcs_x", g_rcsX);
@@ -1320,9 +1339,8 @@ static bool SaveConfig(const char* name){
     WriteBool(out, "bhop", g_bhopEnabled);
     WriteBool(out, "strafe_enabled", g_strafeEnabled);
     WriteInt(out, "strafe_key", g_strafeKey);
-    WriteBool(out, "anti_aim_enabled", g_antiAimEnabled);
-    WriteInt(out, "anti_aim_type", g_antiAimType);
-    WriteFloat(out, "anti_aim_speed", g_antiAimSpeed);
+    // anti-aim, edge jump, autopeek save removed
+    WriteBool(out, "night_mode_overlay", g_nightModeOverlay);
     WriteBool(out, "fov_enabled", g_fovEnabled);
     WriteFloat(out, "fov_value", g_fovValue);
     WriteBool(out, "third_person", g_thirdPerson);
@@ -1348,6 +1366,9 @@ static bool SaveConfig(const char* name){
     WriteColor(out, "sky_color", g_skyColor);
     WriteBool(out, "sky_night_mode", g_skyNightMode);
     WriteFloat(out, "sky_night_strength", g_skyNightStrength);
+    WriteBool(out, "world_fog", g_worldFogEnabled);
+    WriteColor(out, "world_fog_col", g_worldFogColor);
+    WriteFloat(out, "world_fog_strength", g_worldFogStrength);
     WriteBool(out, "damage_floaters", g_damageFloatersEnabled);
     WriteFloat(out, "damage_floater_duration", g_damageFloaterDuration);
     WriteFloat(out, "damage_floater_scale", g_damageFloaterScale);
@@ -1658,8 +1679,8 @@ static void DrawSpectatorList(float sw){
     if(!g_spectatorListEnabled) return;
     if(g_spectatorCount == 0 && !g_weAreSpectating) return;
     ImDrawList* dl = ImGui::GetForegroundDrawList(); if(!dl) return;
-    ImFont* fBold = font::lexend_bold    ? font::lexend_bold    : ImGui::GetFont();
-    ImFont* fReg  = font::lexend_regular ? font::lexend_regular : ImGui::GetFont();
+    ImFont* fBold = font::bold    ? font::bold    : ImGui::GetFont();
+    ImFont* fReg  = font::regular ? font::regular : ImGui::GetFont();
 
     const float margin  = 15.f;
     const float padX    = 12.f;
@@ -1791,12 +1812,15 @@ static void ProcessHitEvents(){
                 DamageFloater df{};
                 df.damage = dmg;
                 df.spawnMs = GetTickCount64();
-                df.ax = (g_damageFloaterAnchor == 1) ? e.chest_x : e.head_x;
-                df.ay = (g_damageFloaterAnchor == 1) ? e.chest_y : e.head_y;
+                df.ax = e.head_x;
+                df.ay = e.head_y;
                 df.duration = g_damageFloaterDuration;
+                // Store world position (head in world space, slight up offset)
+                df.wx = e.head_ox;
+                df.wy = e.head_oy;
+                df.wz = e.head_oz + 8.f;
                 UINT64 j = GetTickCount64() ^ (UINT64)(uintptr_t)e.pawn ^ ((UINT64)e.ent_index << 17);
-                df.ax += ((j & 0xFFF) / 4095.f) * 12.f - 6.f;
-                df.ay += (((j >> 12) & 0xFFF) / 4095.f) * 14.f - 10.f;
+                df.randOffX = ((j & 0xFFF) / 4095.f) * 16.f - 8.f;
                 g_damageFloaters.push_back(df);
                 while(g_damageFloaters.size() > 32) g_damageFloaters.pop_front();
             }
@@ -1962,6 +1986,7 @@ static void EnsureSkinRegen(){
 }
 
 static void RunSkinChanger(){
+    return; // temporarily disabled
     if(!g_client) return;
     if(!g_skinEnabled){
         if(g_skinForceUpdate){
@@ -2003,11 +2028,21 @@ static void RunSkinChanger(){
 static void RunAutostop(){
     if(!g_autostopEnabled||!g_client)return;
     if(!(GetAsyncKeyState(g_aimbotKey)&0x8000))return;  // Only when holding aim key
+    if(g_menuOpen) return;
     uintptr_t lp=Rd<uintptr_t>(g_client+offsets::client::dwLocalPlayerPawn);if(!lp)return;
     __try{
         Vec3 vel=Rd<Vec3>(lp+offsets::base_entity::m_vecVelocity);
-        float spd=sqrtf(vel.x*vel.x+vel.y*vel.y+vel.z*vel.z);
-        if(spd>5.f) Wr<Vec3>(lp+offsets::base_entity::m_vecVelocity, Vec3{0.f,0.f,0.f});
+        float spd2d=sqrtf(vel.x*vel.x+vel.y*vel.y);
+        if(spd2d > 5.f){
+            // Zero velocity client-side for prediction accuracy
+            Vec3 stopped{0.f, 0.f, vel.z};
+            Wr<Vec3>(lp+offsets::base_entity::m_vecVelocity, stopped);
+            // Also suppress all movement buttons so no new velocity is added this frame
+            Wr<int>(g_client+offsets::buttons::forward, 0);
+            Wr<int>(g_client+offsets::buttons::back,    0);
+            Wr<int>(g_client+offsets::buttons::left,    0);
+            Wr<int>(g_client+offsets::buttons::right,   0);
+        }
     }__except(EXCEPTION_EXECUTE_HANDLER){}
 }
 
@@ -2030,74 +2065,77 @@ static void DrawDebugConsole() {
     ImGui::End();
 }
 
-// Bunnyhop: hold jump pressed for several frames after landing so game tick catches it
-// CS2 bhop: trigger a fresh jump ONLY on the landing frame (state transition),
-// hold the press for a few frames so the server tick always catches it.
-// Writing 65537 continuously = game sees "held", not "new press" → no re-jump.
+// Bunnyhop: suppress jump when in the air so each landing = fresh press.
+// CS2 sub-tick: write 65537 on the landing frame; write 0 in-air.
 static void RunBHop(){
     if(!g_bhopEnabled||!g_client)return;
-    if(g_menuOpen) return;
+    if(g_menuOpen){ Wr<int>(g_client+offsets::buttons::jump, 0); return; }
 
-    if(!(GetAsyncKeyState(VK_SPACE)&0x8000)){
-        Wr<int>(g_client+offsets::buttons::jump, 0);
-        return;
-    }
+    bool spaceHeld = (GetAsyncKeyState(VK_SPACE)&0x8000) != 0;
+    if(!spaceHeld){ Wr<int>(g_client+offsets::buttons::jump, 0); return; }
 
-    uintptr_t lp=Rd<uintptr_t>(g_client+offsets::client::dwLocalPlayerPawn);if(!lp)return;
+    uintptr_t lp=Rd<uintptr_t>(g_client+offsets::client::dwLocalPlayerPawn); if(!lp)return;
+    bool onGround = (Rd<uint32_t>(lp+offsets::base_entity::m_fFlags) & 1) != 0;
 
-    bool  onGround = (Rd<uint32_t>(lp+offsets::base_entity::m_fFlags) & 1) != 0;
-    float velZ     = Rd<float>(lp+offsets::base_entity::m_vecVelocity+8); // Z component
-
-    static bool  s_prevOnGround = false;
-    static float s_prevVelZ     = 0.f;
-    static int   s_holdFrames   = 0;
-
-    // Detect landing via flag transition OR velocity transition (falling → stopped)
-    bool justLanded = (onGround && !s_prevOnGround) ||
-                      (s_prevVelZ < -60.f && velZ > -10.f);
-
-    s_prevOnGround = onGround;
-    s_prevVelZ     = velZ;
-
-    if(justLanded) s_holdFrames = 3; // hold 3 frames so game tick picks up press
-
-    if(s_holdFrames > 0){
-        Wr<int>(g_client+offsets::buttons::jump, 65537);
-        --s_holdFrames;
-    } else {
-        Wr<int>(g_client+offsets::buttons::jump, 0);
-    }
+    // On ground: inject jump (65537 = pressed+toggled); in air: suppress (0)
+    Wr<int>(g_client+offsets::buttons::jump, onGround ? 65537 : 0);
 }
 
-static void RunAntiAim(){
-    if(!g_antiAimEnabled||!g_client) return;
-    uintptr_t vaAddr = ViewAnglesAddr();
-    if(!vaAddr) return;
+// RunEdgeJump removed
 
-    float yaw = Rd<float>(vaAddr+4);
-    (void)Rd<float>(vaAddr);   // pitch - reserved
-    (void)Rd<float>(vaAddr+8); // roll - reserved
+// RunAutoPeek removed
 
-    static float antiAimAngle = 0.f;
-    float deltaTime = 0.016f; // ~60fps
+// RunAntiAim removed
 
-    if(g_antiAimType == 0){ // Spin
-        antiAimAngle += (g_antiAimSpeed * deltaTime);
-        if(antiAimAngle > 180.f) antiAimAngle -= 360.f;
-        Wr<float>(vaAddr+4, antiAimAngle);
+// Scan entity list for C_GradientFog entity (indices 512-2048, non-player zone)
+static uintptr_t FindFogEntity(){
+    if(!g_client) return 0;
+    uintptr_t entityList = Rd<uintptr_t>(g_client + offsets::client::dwEntityList);
+    if(!entityList) return 0;
+    for(int i = 512; i < 2048; i++){
+        uintptr_t chunk = Rd<uintptr_t>(entityList + 8*((i & 0x7FFF) >> 9) + 16);
+        if(!chunk) continue;
+        uintptr_t ent = Rd<uintptr_t>(chunk + 112 * (i & 0x1FF));  // kEntityListStride=112
+        if(!ent || !IsLikelyPtr(ent)) continue;
+        __try {
+            // m_bIsEnabled at 0x641 must be 0 or 1
+            uint8_t enabled = Rd<uint8_t>(ent + 0x641);
+            if(enabled > 1) continue;
+            // m_flFogStrength at 0x638 must be finite and in [0, 20]
+            float strength = Rd<float>(ent + 0x638);
+            if(!std::isfinite(strength) || strength < 0.f || strength > 20.f) continue;
+            // m_fogColor at 0x634: at least one channel non-zero
+            uint32_t col = Rd<uint32_t>(ent + 0x634);
+            if(col == 0) continue;
+            // m_flFogStartDistance at 0x624 (from cs2-dumper): plausible float
+            float startDist = Rd<float>(ent + 0x624);
+            if(!std::isfinite(startDist)) continue;
+            return ent;
+        } __except(EXCEPTION_EXECUTE_HANDLER) {}
     }
-    else if(g_antiAimType == 1){ // Desync (flip between left/right)
-        static DWORD desyncTime = 0;
-        UINT64 now = GetTickCount64();
-        if(now - desyncTime > 100){
-            antiAimAngle = (antiAimAngle > 0.f) ? -45.f : 45.f;
-            desyncTime = now;
-        }
-        Wr<float>(vaAddr+4, yaw + antiAimAngle);
+    return 0;
+}
+
+static void RunWorldFog(){
+    if(!g_worldFogEnabled || !g_client) return;
+    UINT64 now = GetTickCount64();
+    // Re-scan every 3s or when pointer lost
+    if(!g_fogEntityPtr && now - g_fogEntityScanTick > 3000){
+        g_fogEntityPtr = FindFogEntity();
+        g_fogEntityScanTick = now;
     }
-    else if(g_antiAimType == 2){ // Jitter
-        antiAimAngle = (sinf((float)GetTickCount64()*0.01f)*30.f);
-        Wr<float>(vaAddr+4, yaw + antiAimAngle);
+    if(!g_fogEntityPtr) return;
+    __try {
+        // Write fog color as RGBA bytes
+        Wr<uint8_t>(g_fogEntityPtr + 0x634, (uint8_t)(g_worldFogColor[0] * 255));
+        Wr<uint8_t>(g_fogEntityPtr + 0x635, (uint8_t)(g_worldFogColor[1] * 255));
+        Wr<uint8_t>(g_fogEntityPtr + 0x636, (uint8_t)(g_worldFogColor[2] * 255));
+        Wr<uint8_t>(g_fogEntityPtr + 0x637, 255);
+        // Write fog strength and enable
+        Wr<float>(g_fogEntityPtr + 0x638, g_worldFogStrength);
+        Wr<uint8_t>(g_fogEntityPtr + 0x641, 1);
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        g_fogEntityPtr = 0;  // ptr went bad, rescan next time
     }
 }
 
@@ -2108,58 +2146,6 @@ static void RunFOVChanger(){
     bool scoped=Rd<bool>(lp+offsets::cs_pawn::m_bIsScoped);if(scoped)return;
     uintptr_t camSvc=Rd<uintptr_t>(lp+offsets::base_pawn::m_pCameraServices);if(!camSvc)return;
     Wr<float>(camSvc+offsets::camera::m_iFOV,g_fovValue);
-}
-
-static void RunThirdPerson(){
-    if(!g_client)return;
-    __try{
-        uintptr_t input=Rd<uintptr_t>(g_client+offsets::client::dwCSGOInput);
-        uintptr_t lp=Rd<uintptr_t>(g_client+offsets::client::dwLocalPlayerPawn);
-        if(!lp || lp <= 0x10000) return;
-        int life = Rd<uint8_t>(lp + offsets::base_entity::m_lifeState);
-        bool allowThird = g_thirdPerson && (life == 0);
-        uintptr_t vaAddr=ViewAnglesAddr();
-        if(input && input > 0x10000 && input < 0x7FFFFFFFFFFF){
-            __try{
-                Wr<uint8_t>(input+offsets::csgo_input::m_in_thirdperson, allowThird ? 1 : 0);
-            }__except(EXCEPTION_EXECUTE_HANDLER){}
-
-            if(allowThird){
-                __try{
-                    float pitch=Rd<float>(vaAddr);
-                    float yaw=Rd<float>(vaAddr+4);
-                    float pitchOffset = (g_tpHeightOffset / 100.f) * 8.f;
-                    Wr<float>(input+offsets::csgo_input::m_third_person_angles, pitch - pitchOffset);
-                    Wr<float>(input+offsets::csgo_input::m_third_person_angles+4, yaw);
-                    Wr<float>(input+offsets::csgo_input::m_third_person_angles+8, 0.0f);
-                }__except(EXCEPTION_EXECUTE_HANDLER){}
-            }
-        }
-
-        __try{
-            uintptr_t obs=Rd<uintptr_t>(lp+offsets::base_pawn::m_pObserverServices);
-            if(obs && obs > 0x10000 && obs < 0x7FFFFFFFFFFF){
-                if(allowThird){
-                    Wr<uint8_t>(obs+offsets::observer::m_iObserverMode, 3);  // OBS_MODE_CHASE
-                    Wr<uint8_t>(obs+offsets::observer::m_bForcedObserverMode, 1);
-                    float dist = Clampf(g_tpDist, 50.f, 200.f);
-                    Wr<float>(obs+offsets::observer::m_flObserverChaseDistance, dist);
-                }else{
-                    Wr<uint8_t>(obs+offsets::observer::m_bForcedObserverMode, 0);
-                    Wr<uint8_t>(obs+offsets::observer::m_iObserverMode, 0);
-                }
-            }
-            if(allowThird){
-                float pitch=Rd<float>(vaAddr);
-                float yaw=Rd<float>(vaAddr+4);
-                float pitchOffset = (g_tpHeightOffset / 100.f) * 8.f;
-                uintptr_t h = lp + offsets::cs_pawn::m_thirdPersonHeading; // QAngle on pawn
-                Wr<float>(h, pitch - pitchOffset);
-                Wr<float>(h + 4, yaw);
-                Wr<float>(h + 8, 0.f);
-            }
-        }__except(EXCEPTION_EXECUTE_HANDLER){}
-    }__except(EXCEPTION_EXECUTE_HANDLER){}
 }
 
 static void RunRCS(){
@@ -2189,9 +2175,9 @@ static void RunRCS(){
 
     uintptr_t vaAddr=ViewAnglesAddr();if(!vaAddr)return;
     float pitch=Rd<float>(vaAddr);float yaw=Rd<float>(vaAddr+4);
-    float smooth=Clampf(g_rcsSmooth,1.f,50.f);
-    pitch-=(dx*2.f)/smooth;
-    yaw -=(dy*2.f)/smooth;
+    // Apply full punch delta * 2.0 (CS2 punch multiplier)
+    pitch-=dx*2.f;
+    yaw -=dy*2.f;
     pitch=Clampf(pitch,-89.f,89.f);
     if(yaw>180.f)yaw-=360.f;else if(yaw<-180.f)yaw+=360.f;
     Wr<float>(vaAddr,pitch);
@@ -2215,14 +2201,14 @@ static void RunStrafeHelper(){
 
     if(fabsf(delta) < 0.1f) return;
 
-    if(delta > 0.f){ // Moving mouse Left (positive delta in degrees usually)
-        // Note: ViewAngles in CS2: Left is increasing degrees (0 -> 90 -> 180)
-        // If delta > 0, we are turning Left. Press 'A'.
-        Wr<int>(g_client+offsets::buttons::left, 65537);
-        Wr<int>(g_client+offsets::buttons::right, 256);
-    } else { // Moving mouse Right
+    if(delta > 0.f){
+        // Turning left → press A, release D
+        Wr<int>(g_client+offsets::buttons::left,  65537);
+        Wr<int>(g_client+offsets::buttons::right, 0);
+    } else {
+        // Turning right → press D, release A
         Wr<int>(g_client+offsets::buttons::right, 65537);
-        Wr<int>(g_client+offsets::buttons::left, 256);
+        Wr<int>(g_client+offsets::buttons::left,  0);
     }
 }
 
@@ -2292,22 +2278,35 @@ static void RunAimbot(){
         if(!e.valid||!e.pawn||!IsLikelyPtr(e.pawn))continue;
         if(g_aimbotTeamChk&&e.team==g_esp_local_team)continue;
         if(e.distance>g_espMaxDist)continue;
+        if(g_aimbotVisCheck&&!e.spotted)continue;  // visibility check like triggerbot
         UpdatePawnBones(e.pawn);
         Vec3 origin{e.origin_x,e.origin_y,e.origin_z};
-        Vec3 headWorld{e.head_ox,e.head_oy,e.head_oz};
-        Vec3 viewOff=headWorld-origin;
-        Vec3 aimPoint=origin+viewOff;
-        if(g_aimbotBone==1 || g_aimbotBone==2){
-            Vec3 bonePos{};
-            int boneId = (g_aimbotBone==1) ? BONE_NECK : BONE_SPINE3;
-            if(GetBonePos(e.pawn, boneId, bonePos)) aimPoint = bonePos;
-            else { float boneFactor=(g_aimbotBone==1)?0.75f:0.5f; aimPoint=origin+viewOff*boneFactor; }
+        // Bone targeting — try actual skeleton bones first, fall back to eye-offset
+        auto getBone = [&](int id, Vec3& out) -> bool {
+            return GetBonePos(e.pawn, id, out);
+        };
+        Vec3 aimPoint{e.head_ox, e.head_oy, e.head_oz}; // default = eye position fallback
+        if(g_aimbotBone==0){ // Head
+            Vec3 bp{}; if(getBone(BONE_HEAD,bp)) aimPoint=bp;
             evalPoint(aimPoint);
-        }else if(g_aimbotBone==3){
-            static const int bones[] = {BONE_HEAD,BONE_NECK,BONE_SPINE3,BONE_SPINE2,BONE_PELVIS};
-            for(int b: bones){ Vec3 bp{}; if(GetBonePos(e.pawn,b,bp)) evalPoint(bp); }
-            if(!found) evalPoint(aimPoint);
-        }else evalPoint(aimPoint);
+        }else if(g_aimbotBone==1){ // Neck
+            Vec3 bp{}; if(getBone(BONE_NECK,bp)) aimPoint=bp;
+            evalPoint(aimPoint);
+        }else if(g_aimbotBone==2){ // Chest
+            Vec3 bp{}; if(getBone(BONE_SPINE3,bp)) aimPoint=bp;
+            evalPoint(aimPoint);
+        }else if(g_aimbotBone==3){ // Pelvis
+            Vec3 bp{}; if(getBone(BONE_PELVIS,bp)) aimPoint=bp;
+            evalPoint(aimPoint);
+        }else if(g_aimbotBone==4){ // Closest — scan all major bones
+            const int allBones[] = {BONE_HEAD,BONE_NECK,BONE_SPINE3,BONE_SPINE2,BONE_PELVIS,
+                                    BONE_ARM_UP_L,BONE_ARM_UP_R,BONE_LEG_UP_L,BONE_LEG_UP_R};
+            bool anyBone = false;
+            for(int b: allBones){ Vec3 bp{}; if(getBone(b,bp)){ evalPoint(bp); anyBone=true; } }
+            if(!anyBone) evalPoint(aimPoint);
+        }else{ // Fallback
+            evalPoint(aimPoint);
+        }
     }
     // Path 2: if no ESP entries, iterate entity list directly (like TempleWare)
     if(!found){
@@ -2345,7 +2344,10 @@ static void RunAimbot(){
     newPitch=Clampf(newPitch,-89.f,89.f);
     if(newYaw>180.f)newYaw-=360.f;else if(newYaw<-180.f)newYaw+=360.f;
     Wr<float>(vaAddr,newPitch);Wr<float>(vaAddr+4,newYaw);
+
 }
+
+// RunRagebot removed
 
 static void RunDoubleTap(){
     if(!g_dtEnabled||!g_client) return;
@@ -2366,11 +2368,6 @@ static float Randf(float lo,float hi){
     std::uniform_real_distribution<float>d(lo,hi);return d(g_rng);
 }
 
-struct Notification{char text[256];ImU32 color;float lifetime,maxlife,yOff,xOff;};
-static std::deque<Notification>g_notifs;
-struct MenuNote{char text[96];ImU32 color;};
-static std::deque<MenuNote> g_menuNotes;
-
 struct BulletTrace{Vec3 start,end;float lifetime,maxlife;ImU32 color;};
 static std::deque<BulletTrace>g_traces;
 static int g_lastShotsFired = 0;
@@ -2386,19 +2383,9 @@ static float g_bombDefuseEnd=0.f;
 static float g_lastBombScan=0.f;
 
 static void PushNotification(const char*text,ImU32 color){
+    (void)color;
     if(!text||!text[0])return;
-    Notification n{};
-    std::snprintf(n.text,sizeof(n.text),"%s",text);
-    n.color=color;
-    n.maxlife=2.5f;n.lifetime=2.5f;n.yOff=0.f;
-    n.xOff=(float)g_esp_screen_w + 200.f;
-    g_notifs.push_back(n);
-    if(g_notifs.size()>8)g_notifs.pop_front();
-    MenuNote m{};
-    std::snprintf(m.text,sizeof(m.text),"%s",text);
-    m.color=color;
-    g_menuNotes.push_back(m);
-    if(g_menuNotes.size()>10) g_menuNotes.pop_front();
+    // Toasts disabled (were top-right sliding popups).
 }
 
 static void PlayHitSound(int type){
@@ -2459,8 +2446,14 @@ static void DrawBulletTraces(float dt){
         float a=Clampf(t.lifetime/t.maxlife,0.f,1.f);
         float sx,sy,ex,ey;
         if(WorldToScreen(vm,t.start,g_esp_screen_w,g_esp_screen_h,sx,sy)&&WorldToScreen(vm,t.end,g_esp_screen_w,g_esp_screen_h,ex,ey)){
-            ImU32 col=IM_COL32((t.color>>IM_COL32_R_SHIFT)&0xFF,(t.color>>IM_COL32_G_SHIFT)&0xFF,(t.color>>IM_COL32_B_SHIFT)&0xFF,(int)(255*a));
-            dl->AddLine({sx,sy},{ex,ey},col,1.3f);
+            uint8_t r=(t.color>>IM_COL32_R_SHIFT)&0xFF, gc=(t.color>>IM_COL32_G_SHIFT)&0xFF, b=(t.color>>IM_COL32_B_SHIFT)&0xFF;
+            // Glow layers: outer (wide+dim), mid, inner bright
+            dl->AddLine({sx,sy},{ex,ey}, IM_COL32(r,gc,b,(int)(40*a)),  7.f);
+            dl->AddLine({sx,sy},{ex,ey}, IM_COL32(r,gc,b,(int)(80*a)),  3.5f);
+            dl->AddLine({sx,sy},{ex,ey}, IM_COL32(r,gc,b,(int)(220*a)), 1.2f);
+            // Bright endpoint dot at impact
+            dl->AddCircleFilled({ex,ey}, 3.5f*a, IM_COL32(r,gc,b,(int)(180*a)), 8);
+            dl->AddCircleFilled({ex,ey}, 1.5f*a, IM_COL32(255,255,255,(int)(180*a)), 8);
         }
     }
     g_traces.erase(std::remove_if(g_traces.begin(),g_traces.end(),[](const BulletTrace& t){return t.lifetime<=0.f;}),g_traces.end());
@@ -2553,7 +2546,7 @@ static void DrawSoundPings(float dt){
 static void DrawLogs(float dt,float sw,float sh){
     if(g_logs.empty()) return;
     ImDrawList*dl=ImGui::GetForegroundDrawList();if(!dl)return;
-    ImFont* mainFont=font::lexend_bold?font::lexend_bold:ImGui::GetFont();
+    ImFont* mainFont=font::bold?font::bold:ImGui::GetFont();
     ImFont* iconFont=font::icomoon;
     float cx=sw*0.5f,cy=sh*0.5f,y=cy+28.f;
     static const char hitIcon[] = "\xee\x80\x81";   // crosshair (icomoon PUA)
@@ -2632,7 +2625,7 @@ static void DrawBombTimer(float sw){
     }
     char siteStr[2] = { (char)(g_bombSite==1?'B':'A'), '\0' };
     ImDrawList*dl=ImGui::GetForegroundDrawList();if(!dl)return;
-    ImFont* reg = font::lexend_regular ? font::lexend_regular : ImGui::GetFont();
+    ImFont* reg = font::regular ? font::regular : ImGui::GetFont();
     const float fs = reg->LegacySize;
     ImVec2 wBomb = reg->CalcTextSizeA(fs, FLT_MAX, 0.f, "Bomb ");
     ImVec2 wSite = reg->CalcTextSizeA(fs, FLT_MAX, 0.f, siteStr);
@@ -2794,7 +2787,7 @@ static void PidoSection(const char* title){
     const float h    = 20.f * s;
     const float fpx  = 9.f * s;
     ImDrawList* dl   = ImGui::GetWindowDrawList();
-    ImFont* reg      = font::lexend_regular ? font::lexend_regular : ImGui::GetFont();
+    ImFont* reg      = font::regular ? font::regular : ImGui::GetFont();
     float midY       = pos.y + h * 0.5f;
 
     // Full-width thin hairline
@@ -2862,7 +2855,7 @@ static bool BeginPidoGroup(const char* id, const char* title, const ImVec2& size
     dl->AddRect(p, {p.x+sw.x, p.y+sw.y}, WithAlpha(g_pido.elemStroke, ga), rnd, 0, 1.f);
 
     // Title row inside the group: centered text + thin separator below
-    ImFont* reg = font::lexend_regular ? font::lexend_regular : ImGui::GetFont();
+    ImFont* reg = font::regular ? font::regular : ImGui::GetFont();
     const float fpx = 9.f * s;
     const float titleH = 18.f * s;
     ImVec2 tsz = reg->CalcTextSizeA(fpx, FLT_MAX, 0.f, title);
@@ -2917,7 +2910,7 @@ static bool PidoTab(const char* icon, const char* label, const char* /*desc*/, b
         IM_COL32(255, 255, 255, 8));
 
     ImU32 txtCol = selected ? g_pido.textActive : (hovered ? g_pido.text : g_pido.textDim);
-    ImFont* reg = font::lexend_regular ? font::lexend_regular : ImGui::GetFont();
+    ImFont* reg = font::regular ? font::regular : ImGui::GetFont();
     const char* labelEnd = LabelTextEnd(label);
     float midY = pos.y + height * 0.5f;
     ImU32 dotCol = LerpColor(IM_COL32(50, 52, 64, 200), g_pido.accent, dotAnim);
@@ -2971,22 +2964,8 @@ static bool PidoTab(const char* icon, const char* label, const char* /*desc*/, b
             // Vertical meridian
             dl->AddLine({cx, midY-r},{cx, midY+r}, ic2, 0.8f*s);
         }   break;
-        case 3: { // Skins: diamond — 5 points with facet lines
-            ImVec2 top   = {cx,       midY-r};
-            ImVec2 left  = {cx-r*0.8f, midY-r*0.1f};
-            ImVec2 right = {cx+r*0.8f, midY-r*0.1f};
-            ImVec2 botL  = {cx-r*0.5f, midY+r};
-            ImVec2 botR  = {cx+r*0.5f, midY+r};
-            dl->AddLine(top,   left,  ic, 1.f*s);
-            dl->AddLine(top,   right, ic, 1.f*s);
-            dl->AddLine(left,  botL,  ic, 1.f*s);
-            dl->AddLine(right, botR,  ic, 1.f*s);
-            dl->AddLine(botL,  botR,  ic, 1.f*s);
-            dl->AddLine(left,  right, ic2, 0.8f*s);
-            dl->AddLine(left,  botR,  ic2, 0.7f*s);
-            dl->AddLine(right, botL,  ic2, 0.7f*s);
-        }   break;
-        case 4: { // Misc: gear — inner circle + 6 rectangular teeth
+        // case 3 (Skins) removed
+        case 3: { // Misc: gear — inner circle + 6 rectangular teeth
             float ri = r*0.42f, ro = r*0.72f;
             dl->AddCircle({cx,midY}, ri, ic, 16, 1.f*s);
             const int TEETH = 6;
@@ -3035,7 +3014,7 @@ static bool PidoToggle(const char* label, const char* desc, bool* v){
     ImDrawList* dl = ImGui::GetWindowDrawList();
     if(hovered) dl->AddRectFilled(pos, {pos.x+width, pos.y+height}, IM_COL32(255,255,255,5), 2.f*s);
 
-    ImFont* reg  = font::lexend_regular ? font::lexend_regular : ImGui::GetFont();
+    ImFont* reg  = font::regular ? font::regular : ImGui::GetFont();
     const char* labelEnd = LabelTextEnd(label);
     float midY = pos.y + height * 0.5f;
 
@@ -3106,7 +3085,7 @@ static bool PidoSliderFloat(const char* label, const char* desc, float* v, float
     ImDrawList* dl = ImGui::GetWindowDrawList();
     if(hovered) dl->AddRectFilled(pos, {pos.x+width, pos.y+height}, IM_COL32(255,255,255,4), 2.f*s);
 
-    ImFont* reg  = font::lexend_regular ? font::lexend_regular : ImGui::GetFont();
+    ImFont* reg  = font::regular ? font::regular : ImGui::GetFont();
     const char* labelEnd = LabelTextEnd(label);
     dl->AddText(reg, 11.f*s, {pos.x+8.f*s, midY-reg->LegacySize*s*0.5f}, g_pido.text, label, labelEnd);
 
@@ -3178,7 +3157,7 @@ static bool PidoSliderInt(const char* label, const char* desc, int* v, int v_min
     ImDrawList* dl = ImGui::GetWindowDrawList();
     if(hovered) dl->AddRectFilled(pos, {pos.x+width, pos.y+height}, IM_COL32(255,255,255,4), 2.f*s);
 
-    ImFont* reg  = font::lexend_regular ? font::lexend_regular : ImGui::GetFont();
+    ImFont* reg  = font::regular ? font::regular : ImGui::GetFont();
     const char* labelEnd = LabelTextEnd(label);
     dl->AddText(reg, 11.f*s, {pos.x+8.f*s, midY-reg->LegacySize*s*0.5f}, g_pido.text, label, labelEnd);
 
@@ -3227,8 +3206,8 @@ static bool PidoCombo(const char* label, const char* desc, int* current_item, co
     // Thin separator at row bottom
     dl->AddLine({pos.x+6.f*s, pos.y+height-0.5f}, {pos.x+width-6.f*s, pos.y+height-0.5f}, IM_COL32(255,255,255,12));
 
-    ImFont* bold = font::lexend_bold ? font::lexend_bold : ImGui::GetFont();
-    ImFont* reg  = font::lexend_regular ? font::lexend_regular : ImGui::GetFont();
+    ImFont* bold = font::bold ? font::bold : ImGui::GetFont();
+    ImFont* reg  = font::regular ? font::regular : ImGui::GetFont();
     const char* labelEnd = LabelTextEnd(label);
     float midY = pos.y + height * 0.5f;
     dl->AddText(bold, 12.f*s, {pos.x+8.f*s, midY - 6.f*s}, g_pido.textActive, label, labelEnd);
@@ -3318,7 +3297,7 @@ static bool PidoColorEdit4(const char* label, const char* desc, float col[4], Im
     // Thin separator at row bottom
     dl->AddLine({pos.x+6.f*s, pos.y+height-0.5f}, {pos.x+width-6.f*s, pos.y+height-0.5f}, IM_COL32(255,255,255,12));
 
-    ImFont* bold = font::lexend_bold ? font::lexend_bold : ImGui::GetFont();
+    ImFont* bold = font::bold ? font::bold : ImGui::GetFont();
     const char* labelEnd = LabelTextEnd(label);
     float midY = pos.y + height * 0.5f;
     dl->AddText(bold, 13.f*s, {pos.x+12.f*s, midY - 6.5f*s}, g_pido.textActive, label, labelEnd);
@@ -3370,8 +3349,8 @@ static bool PidoInputText(const char* label, const char* desc, char* buf, size_t
     dl->AddRectFilled(bbMin, bbMax, bg, 2.f * s);
     dl->AddLine({pos.x+6.f*s, pos.y+height-0.5f}, {pos.x+width-6.f*s, pos.y+height-0.5f}, IM_COL32(255,255,255,12));
 
-    ImFont* bold = font::lexend_bold ? font::lexend_bold : ImGui::GetFont();
-    ImFont* reg = font::lexend_regular ? font::lexend_regular : ImGui::GetFont();
+    ImFont* bold = font::bold ? font::bold : ImGui::GetFont();
+    ImFont* reg = font::regular ? font::regular : ImGui::GetFont();
     const char* labelEnd = LabelTextEnd(label);
     float labelY = (desc && desc[0]) ? pos.y+2.f*s : pos.y + (height - bold->LegacySize*s)*0.5f;
     dl->AddText(bold, 12.f * s, {pos.x+8.f*s, labelY}, g_pido.textActive, label, labelEnd);
@@ -3410,8 +3389,8 @@ static bool PidoInputInt(const char* label, const char* desc, int* v){
     dl->AddRectFilled(bbMin, bbMax, bg, 2.f * s);
     dl->AddLine({pos.x+6.f*s, pos.y+height-0.5f}, {pos.x+width-6.f*s, pos.y+height-0.5f}, IM_COL32(255,255,255,12));
 
-    ImFont* bold = font::lexend_bold ? font::lexend_bold : ImGui::GetFont();
-    ImFont* reg = font::lexend_regular ? font::lexend_regular : ImGui::GetFont();
+    ImFont* bold = font::bold ? font::bold : ImGui::GetFont();
+    ImFont* reg = font::regular ? font::regular : ImGui::GetFont();
     const char* labelEnd = LabelTextEnd(label);
     float labelY = (desc && desc[0]) ? pos.y+2.f*s : pos.y + (height - bold->LegacySize*s)*0.5f;
     dl->AddText(bold, 12.f * s, {pos.x+8.f*s, labelY}, g_pido.textActive, label, labelEnd);
@@ -3451,8 +3430,8 @@ static bool PidoKeybind(const char* label, const char* desc, int* key){
     dl->AddRectFilled(bbMin, bbMax, bg, 2.f * s);
     dl->AddLine({pos.x+6.f*s, pos.y+height-0.5f}, {pos.x+width-6.f*s, pos.y+height-0.5f}, IM_COL32(255,255,255,12));
 
-    ImFont* bold = font::lexend_bold ? font::lexend_bold : ImGui::GetFont();
-    ImFont* reg = font::lexend_regular ? font::lexend_regular : ImGui::GetFont();
+    ImFont* bold = font::bold ? font::bold : ImGui::GetFont();
+    ImFont* reg = font::regular ? font::regular : ImGui::GetFont();
     const char* labelEnd = LabelTextEnd(label);
     float labelY = (desc && desc[0]) ? pos.y+2.f*s : pos.y + (height - bold->LegacySize*s)*0.5f;
     dl->AddText(bold, 12.f * s, {pos.x+8.f*s, labelY}, g_pido.textActive, label, labelEnd);
@@ -3597,7 +3576,7 @@ static void DrawMenu(){
         return;
     }
 
-    if(font::lexend_bold) ImGui::PushFont(font::lexend_bold);
+    if(font::bold) ImGui::PushFont(font::bold);
 
     ImDrawList*dl=ImGui::GetWindowDrawList();
     ImVec2 pos=ImGui::GetWindowPos();
@@ -3647,8 +3626,8 @@ static void DrawMenu(){
 
     // Header
     {
-        ImFont* fBold = font::lexend_bold ? font::lexend_bold : ImGui::GetFont();
-        ImFont* fReg  = font::lexend_regular ? font::lexend_regular : fBold;
+        ImFont* fBold = font::bold ? font::bold : ImGui::GetFont();
+        ImFont* fReg  = font::regular ? font::regular : fBold;
         float midH = pos.y + headerH * 0.5f;
         ImU32 dimFaded = WithAlpha(g_pido.textDim, animEased);
 
@@ -3689,11 +3668,11 @@ static void DrawMenu(){
     }
     // Bottom tab bar
     {
-        const char* tabLabels2[] = {"Aimbot","Visuals","World","Skins","Misc"};
-        ImFont* fTabReg = font::lexend_regular ? font::lexend_regular : ImGui::GetFont();
+        const char* tabLabels2[] = {"Aimbot","Visuals","World","Misc"};
+        ImFont* fTabReg = font::regular ? font::regular : ImGui::GetFont();
         float tabBarTop = pos.y + size.y - tabBarH;
-        float eachW = size.x / 5.f;
-        for(int i=0;i<5;i++){
+        float eachW = size.x / 4.f;
+        for(int i=0;i<4;i++){
             float tx = pos.x + i*eachW;
             ImGui::SetCursorScreenPos({tx, tabBarTop});
             ImGui::InvisibleButton(tabLabels2[i], ImVec2(eachW, tabBarH));
@@ -3743,17 +3722,19 @@ static void DrawMenu(){
         if(g_aimbotEnabled){
             PidoSliderFloat("FOV","", &g_aimbotFov, 1.f, 90.f, "%.1f");
             PidoSliderFloat("Smooth","", &g_aimbotSmooth, 1.f, 30.f, "%.1f");
-            const char* bones[]={"Head","Neck","Chest","Multi"};
+            const char* bones[]={"Head","Neck","Chest","Pelvis","Closest"};
             PidoCombo("Bone","", &g_aimbotBone, bones, IM_ARRAYSIZE(bones));
             PidoKeybind("Aimbot key","", &g_aimbotKey);
             PidoToggle("FOV circle","", &g_fovCircleEnabled);
             if(g_fovCircleEnabled) PidoColorEdit4("FOV color","", g_fovCircleCol);
             PidoToggle("Autostop","", &g_autostopEnabled);
+            PidoToggle("Visibility check","", &g_aimbotVisCheck);
+            // Ragebot toggle removed
         }
         EndPidoGroup();
 
-        // Right top: Triggerbot
-        float tbH  = contentH * 0.50f - gap * 0.5f;
+        // Right: Triggerbot / Recoil stacked
+        float tbH  = grpH(3);
         float rcsH = contentH - tbH - gap;
         ImGui::SetCursorPos({rightX, contentY});
         BeginPidoGroup("##g_tb", "Triggerbot", {childW, tbH});
@@ -3762,13 +3743,11 @@ static void DrawMenu(){
         PidoKeybind("Trigger key","", &g_tbKey);
         EndPidoGroup();
 
-        // Right bottom: Recoil Control
         ImGui::SetCursorPos({rightX, contentY + tbH + gap});
         BeginPidoGroup("##g_rcs", "Recoil Control", {childW, rcsH});
         PidoToggle("Enable##rcs","", &g_rcsEnabled);
         PidoSliderFloat("X axis","", &g_rcsX, 0.f, 2.f, "%.2f");
         PidoSliderFloat("Y axis","", &g_rcsY, 0.f, 2.f, "%.2f");
-        PidoSliderFloat("Smooth##rcs","", &g_rcsSmooth, 1.f, 20.f, "%.1f");
         EndPidoGroup();
     }else if(g_activeTab==1){
         // Left: ESP group with sub-sections (Box / Labels / Extra)
@@ -3874,9 +3853,13 @@ static void DrawMenu(){
         if(g_skyColorEnabled) PidoColorEdit4("Sky##col","", g_skyColor);
         PidoToggle("Night mode (sky)","", &g_skyNightMode);
         if(g_skyNightMode) PidoSliderFloat("Night blend","", &g_skyNightStrength, 0.f, 1.f, "%.2f");
-        ImGui::Spacing();
-        ImGui::TextDisabled("Sky hook tints skybox only.");
-        ImGui::TextDisabled("Full-scene night needs fog/ambient/post offsets (IDA).");
+        PidoSection("World Fog");
+        PidoToggle("World fog","Modify C_GradientFog entity", &g_worldFogEnabled);
+        if(g_worldFogEnabled){
+            PidoColorEdit4("Fog color","", g_worldFogColor);
+            PidoSliderFloat("Fog strength","", &g_worldFogStrength, 0.f, 8.f, "%.2f");
+            if(PidoButton("Rescan entity", ImVec2(0,0))){ g_fogEntityPtr = 0; g_fogEntityScanTick = 0; }
+        }
         EndPidoGroup();
 
         ImGui::SetCursorPos({rightX, contentY});
@@ -3896,74 +3879,7 @@ static void DrawMenu(){
         }
         EndPidoGroup();
     }else if(g_activeTab==3){
-        // Left: Skins toggle group
-        float skinsGroupH = grpH(3);
-        ImGui::SetCursorPos({contentX, contentY});
-        BeginPidoGroup("##g_skins", "Skins", {childW, skinsGroupH});
-        PidoToggle("Enable","", &g_skinEnabled);
-        PidoToggle("Active weapon only","", &g_skinActiveOnly);
-        if(PidoButton("Force update", ImVec2(0, 0))) g_skinForceUpdate = true;
-        EndPidoGroup();
-
-        // Right: Override group (full height)
-        ImGui::SetCursorPos({rightX, contentY});
-        BeginPidoGroup("##g_override", "Override", {childW, contentH});
-        static const int kSkinWeaponIds[] = {
-            1,2,3,4,7,8,9,10,11,13,14,16,17,19,24,25,26,27,28,29,30,32,33,34,35,36,38,39,40,42,59,60,61,63,64
-        };
-        const int weaponCount = IM_ARRAYSIZE(kSkinWeaponIds);
-        if(g_skinSelectedWeapon < 0 || g_skinSelectedWeapon >= weaponCount) g_skinSelectedWeapon = 0;
-        int selId = kSkinWeaponIds[g_skinSelectedWeapon];
-        {
-            static const char* s_wnames[35];
-            for(int i = 0; i < weaponCount; i++){
-                WeaponInfo wi = WeaponInfoForId(kSkinWeaponIds[i]);
-                s_wnames[i] = wi.name ? wi.name : "Weapon";
-            }
-            PidoCombo("Weapon##skin", "", &g_skinSelectedWeapon, s_wnames, weaponCount);
-        }
-        static int s_lastWeaponId = -1;
-        if(selId != s_lastWeaponId){
-            if(SkinOverride* cur = FindSkinOverride(selId)){
-                g_skinPaintKit = cur->paintKit;
-                g_skinWear = cur->wear;
-                g_skinSeed = cur->seed;
-                g_skinStatTrak = cur->statTrak;
-            }else{
-                g_skinPaintKit = 0;
-                g_skinWear = 0.01f;
-                g_skinSeed = 0;
-                g_skinStatTrak = 0;
-            }
-            s_lastWeaponId = selId;
-        }
-        PidoInputInt("Paint kit","", &g_skinPaintKit);
-        PidoSliderFloat("Wear","", &g_skinWear, 0.0001f, 1.0f, "%.4f");
-        PidoInputInt("Seed","", &g_skinSeed);
-        PidoInputInt("StatTrak","", &g_skinStatTrak);
-        if(PidoButton("Apply", ImVec2(0, 0))){
-            SetSkinOverride(selId, g_skinPaintKit, g_skinWear, g_skinSeed, g_skinStatTrak);
-            g_skinForceUpdate = true;
-        }
-        ImGui::SameLine();
-        if(PidoButton("Clear", ImVec2(0, 0))){
-            RemoveSkinOverride(selId);
-            g_skinForceUpdate = true;
-        }
-        ImGui::SameLine();
-        if(PidoButton("Clear all", ImVec2(0, 0))){
-            g_skinOverrides.clear();
-            g_skinForceUpdate = true;
-        }
-        {
-            char overrideBuf[32]; std::snprintf(overrideBuf, sizeof(overrideBuf), "Overrides: %d", (int)g_skinOverrides.size());
-            ImFont* reg2 = font::lexend_regular ? font::lexend_regular : ImGui::GetFont();
-            ImVec2 p2 = ImGui::GetCursorScreenPos();
-            ImGui::Dummy(ImVec2(ImGui::GetContentRegionAvail().x, 18.f*s));
-            ImGui::GetWindowDrawList()->AddText(reg2, 11.f*s, {p2.x+10.f*s, p2.y+2.f*s}, g_pido.textDim, overrideBuf);
-        }
-        EndPidoGroup();
-    }else if(g_activeTab==4){
+        // Misc tab (skins tab removed)
         static int s_lastConfigTabFrame = -1;
         if(s_lastConfigTabFrame != ImGui::GetFrameCount()){ s_lastConfigTabFrame = ImGui::GetFrameCount(); RefreshConfigList(); }
 
@@ -3971,11 +3887,13 @@ static void DrawMenu(){
         float movH   = grpH(2);
         float radH   = grpH(1);
         float hudH   = contentH - movH - radH - gap * 2.f;
+        if (hudH < 40.f * s) hudH = 40.f * s;
 
         ImGui::SetCursorPos({contentX, contentY});
         BeginPidoGroup("##g_move", "Movement", {childW, movH});
         PidoToggle("Bunny hop","", &g_bhopEnabled);
-        PidoToggle("Strafe helper","", &g_strafeEnabled);
+        PidoToggle("Auto strafe","", &g_strafeEnabled);
+        // Edge jump + Auto peek removed
         EndPidoGroup();
 
         ImGui::SetCursorPos({contentX, contentY + movH + gap});
@@ -3991,14 +3909,20 @@ static void DrawMenu(){
         PidoToggle("Keybinds","", &g_keybindsEnabled);
         EndPidoGroup();
 
-        // Right column: View + Config stacked
-        float viewH   = grpH(2);
+        // Right column: View + Config stacked (third person module: modules/third_person.cpp)
+        float viewH   = grpH(5);
         float configH = contentH - viewH - gap;
+        if (configH < 40.f * s) configH = 40.f * s;
 
         ImGui::SetCursorPos({rightX, contentY});
         BeginPidoGroup("##g_view", "View", {childW, viewH});
         PidoToggle("FOV changer","", &g_fovEnabled);
         PidoSliderFloat("FOV","", &g_fovValue, 70.f, 130.f, "%.0f");
+        PidoToggle("Third person","Camera behind pawn (alive only)", &g_thirdPerson);
+        if (g_thirdPerson) {
+            PidoSliderFloat("TP distance","Chase distance", &g_tpDist, 50.f, 200.f, "%.0f");
+            PidoSliderFloat("TP height","Vertical camera offset", &g_tpHeightOffset, 0.f, 100.f, "%.0f");
+        }
         EndPidoGroup();
 
         ImGui::SetCursorPos({rightX, contentY + viewH + gap});
@@ -4031,7 +3955,7 @@ static void DrawMenu(){
 
     ImGui::PopStyleVar();
 
-    if(font::lexend_bold) ImGui::PopFont();
+    if(font::bold) ImGui::PopFont();
     ImGui::End();
     ImGui::PopStyleColor();
     ImGui::PopStyleVar(4);
@@ -4274,54 +4198,89 @@ static void UpdateAndDrawParticles(float dt,float sw,float sh){
 }
 
 static void DrawHitmarkerCross(ImDrawList* dl, float cx, float cy, float alpha){
-    float len = 8.f + 6.f * alpha;
-    ImU32 col = IM_COL32(255,255,255,(int)(220*alpha));
-    ImU32 outline = IM_COL32(0,0,0,(int)(120*alpha));
+    const float gap = 2.5f;
+    const float len = gap + 6.f;
+    // Color: gold for headshot, white→red fade for normal
+    ImU32 col, outline;
+    if(g_hitmarkerWasHeadshot){
+        col     = IM_COL32(220,170,60,(int)(240*alpha));
+        outline = IM_COL32(0,0,0,(int)(130*alpha));
+    } else {
+        // white fades toward red as alpha drops
+        int r = 255, g_ = (int)LerpF(255.f, 60.f, 1.f - alpha), b_ = (int)LerpF(255.f, 60.f, 1.f - alpha);
+        col     = IM_COL32(r, g_, b_, (int)(230*alpha));
+        outline = IM_COL32(0,0,0,(int)(120*alpha));
+    }
     if(g_hitmarkerStyle == 0){
-        dl->AddLine({cx-len,cy},{cx+len,cy},outline,2.5f); dl->AddLine({cx-len,cy},{cx+len,cy},col,1.5f);
-        dl->AddLine({cx,cy-len},{cx,cy+len},outline,2.5f); dl->AddLine({cx,cy-len},{cx,cy+len},col,1.5f);
+        // Plus (+) with inner gap
+        dl->AddLine({cx-len,cy},{cx-gap,cy},outline,2.5f); dl->AddLine({cx-len,cy},{cx-gap,cy},col,1.5f);
+        dl->AddLine({cx+gap,cy},{cx+len,cy},outline,2.5f); dl->AddLine({cx+gap,cy},{cx+len,cy},col,1.5f);
+        dl->AddLine({cx,cy-len},{cx,cy-gap},outline,2.5f); dl->AddLine({cx,cy-len},{cx,cy-gap},col,1.5f);
+        dl->AddLine({cx,cy+gap},{cx,cy+len},outline,2.5f); dl->AddLine({cx,cy+gap},{cx,cy+len},col,1.5f);
     }else{
-        dl->AddLine({cx-len*0.7f,cy-len*0.7f},{cx+len*0.7f,cy+len*0.7f},outline,2.5f);
-        dl->AddLine({cx-len*0.7f,cy-len*0.7f},{cx+len*0.7f,cy+len*0.7f},col,1.5f);
-        dl->AddLine({cx-len*0.7f,cy+len*0.7f},{cx+len*0.7f,cy-len*0.7f},outline,2.5f);
-        dl->AddLine({cx-len*0.7f,cy+len*0.7f},{cx+len*0.7f,cy-len*0.7f},col,1.5f);
+        // X with inner gap
+        float d = gap * 0.707f, e = len * 0.707f;
+        dl->AddLine({cx-e,cy-e},{cx-d,cy-d},outline,2.f); dl->AddLine({cx-e,cy-e},{cx-d,cy-d},col,1.5f);
+        dl->AddLine({cx+d,cy+d},{cx+e,cy+e},outline,2.f); dl->AddLine({cx+d,cy+d},{cx+e,cy+e},col,1.5f);
+        dl->AddLine({cx+e,cy-e},{cx+d,cy-d},outline,2.f); dl->AddLine({cx+e,cy-e},{cx+d,cy-d},col,1.5f);
+        dl->AddLine({cx-d,cy+d},{cx-e,cy+e},outline,2.f); dl->AddLine({cx-d,cy+d},{cx-e,cy+e},col,1.5f);
     }
 }
 
 static void DrawDamageFloaters(float sw, float sh){
-    (void)sh;
     if(g_damageFloaters.empty()) return;
     ImDrawList* dl = ImGui::GetForegroundDrawList();
     if(!dl) return;
-    ImFont* fb = font::lexend_bold ? font::lexend_bold : ImGui::GetFont();
+    ImFont* fb = font::bold ? font::bold : ImGui::GetFont();
+    const float* vm = g_client ? reinterpret_cast<const float*>(g_client+offsets::client::dwViewMatrix) : nullptr;
     UINT64 now = GetTickCount64();
-    float baseSize = 18.f * g_damageFloaterScale;
+
     for(auto it = g_damageFloaters.begin(); it != g_damageFloaters.end(); ){
         float elapsed = (float)(now - it->spawnMs) / 1000.f;
-        if(elapsed >= it->duration || !std::isfinite(it->ax) || !std::isfinite(it->ay)){
+        if(elapsed >= it->duration){
             it = g_damageFloaters.erase(it);
             continue;
         }
         float u = elapsed / it->duration;
-        float ease = 1.f - (1.f - u) * (1.f - u);
-        float yo = -ease * 72.f * g_damageFloaterScale;
-        float pop = 1.f + 0.28f * (1.f - ease) * (1.f - ease);
-        float alpha = 1.f - u * u * 0.88f;
-        float dm = Clampf((float)it->damage / 100.f, 0.f, 1.f);
-        ImU32 fill = IM_COL32(
-            (int)LerpF(255.f, 255.f, dm),
-            (int)LerpF(255.f, 140.f, dm),
-            (int)LerpF(200.f, 70.f, dm),
-            (int)(255.f * alpha));
+
+        // 3D rise: world Z goes up over lifetime
+        float worldZOff = u * 55.f * g_damageFloaterScale;
+        Vec3 worldPos{it->wx + it->randOffX, it->wy, it->wz + worldZOff};
+
+        float sx, sy;
+        bool onScreen = vm && WorldToScreen(vm, worldPos, sw, sh, sx, sy);
+        if(!onScreen){ ++it; continue; }
+
+        // Entry pop scale
+        float entryT = Clampf(elapsed / 0.12f, 0.f, 1.f);
+        float entryScale = 0.55f + 0.45f * (entryT * entryT * (3.f - 2.f * entryT));
+        // Fade out last 35%
+        float fadeT = Clampf((u - 0.65f) / 0.35f, 0.f, 1.f);
+        float alpha = 1.f - fadeT * fadeT;
+
         char buf[16];
         std::snprintf(buf, sizeof(buf), "%d", it->damage);
-        float fs = baseSize * pop;
+
+        // Size scales with damage: bigger for high damage
+        float baseSize = Clampf(14.f + (float)it->damage * 0.08f, 14.f, 24.f) * g_damageFloaterScale;
+        float fs = baseSize * entryScale;
         ImVec2 ts = fb->CalcTextSizeA(fs, FLT_MAX, 0.f, buf);
-        float px = it->ax - ts.x * 0.5f;
-        float py = it->ay + yo;
-        dl->AddText(fb, fs, {px+2.f, py+2.f}, IM_COL32(0,0,0,(int)(200*alpha)), buf);
-        dl->AddText(fb, fs, {px+1.f, py}, IM_COL32(0,0,0,(int)(255*alpha)), buf);
-        dl->AddText(fb, fs, {px, py}, fill, buf);
+
+        float tx = sx - ts.x * 0.5f;
+        float ty = sy - ts.y * 0.5f;
+
+        // Color: white for normal, bright yellow for 90+, red for 100+
+        ImU32 textCol;
+        if(it->damage >= 100)      textCol = IM_COL32(255,80,80,(int)(255*alpha));
+        else if(it->damage >= 90)  textCol = IM_COL32(255,210,50,(int)(255*alpha));
+        else                       textCol = IM_COL32(255,255,255,(int)(255*alpha));
+
+        // Thick shadow (Fortnite style)
+        for(int sh2=2;sh2>=1;sh2--){
+            float o=(float)sh2;
+            dl->AddText(fb, fs, {tx+o,ty+o}, IM_COL32(0,0,0,(int)(190*alpha)), buf);
+        }
+        dl->AddText(fb, fs, {tx, ty}, textCol, buf);
         ++it;
     }
 }
@@ -4360,80 +4319,11 @@ static void DrawKillEffect(float sw, float sh){
     dl->AddRectFilled({0,0},{sw,sh}, IM_COL32(180,60,80,alpha));
 }
 
-static void DrawNotifications(float dt,float sw,float sh){
-    if(g_notifs.empty())return;
-    ImDrawList*dl=ImGui::GetForegroundDrawList();if(!dl)return;
-    float yBase=sh*0.20f;
-    int idx=0;
-    for(auto& n: g_notifs){
-        n.lifetime-=dt;
-        float targetX = sw - 250.f;
-        n.xOff = LerpF(n.xOff, targetX, dt*10.f);
-        float t=Clampf(n.lifetime/n.maxlife,0.f,1.f);
-        float alpha=Clampf(1.f-(t*0.4f),0.f,1.f)*Clampf(n.lifetime/0.3f,0.f,1.f);
-        float x=n.xOff;
-        float y=yBase + idx*26.f;
-        float w=240.f;
-        float h=22.f;
-        ImU32 col=IM_COL32((n.color>>IM_COL32_R_SHIFT)&0xFF,(n.color>>IM_COL32_G_SHIFT)&0xFF,(n.color>>IM_COL32_B_SHIFT)&0xFF,(int)(255*alpha));
-        ImU32 bgTint=IM_COL32(16,16,16,(int)(245*alpha));
-        ImU32 brTint=IM_COL32(64,64,64,(int)(220*alpha));
-        ImU32 inTint=IM_COL32(8,8,8,(int)(210*alpha));
-        dl->PushClipRect({x,y},{x+w,y+h},true);
-        dl->AddRectFilled({x,y},{x+w,y+h},bgTint,6.f);
-        dl->AddRect({x,y},{x+w,y+h},brTint,6.f,0,1.f);
-        dl->AddRect({x+1.f,y+1.f},{x+w-1.f,y+h-1.f},inTint,6.f,0,1.f);
-        float gy1=y+(std::min)(3.f,h*0.25f);
-        if(gy1>y+1.2f){
-            float gq1=x+w*0.33f,gq2=x+w*0.66f;
-            dl->AddRectFilledMultiColor({x+2.f,y+1.f},{gq1,gy1},
-                IM_COL32(108,132,188,(int)(220*alpha)), IM_COL32(174,122,190,(int)(220*alpha)), IM_COL32(174,122,190,(int)(220*alpha)), IM_COL32(108,132,188,(int)(220*alpha)));
-            dl->AddRectFilledMultiColor({gq1,y+1.f},{gq2,gy1},
-                IM_COL32(174,122,190,(int)(220*alpha)), IM_COL32(194,166,118,(int)(220*alpha)), IM_COL32(194,166,118,(int)(220*alpha)), IM_COL32(174,122,190,(int)(220*alpha)));
-            dl->AddRectFilledMultiColor({gq2,y+1.f},{x+w-2.f,gy1},
-                IM_COL32(194,166,118,(int)(220*alpha)), IM_COL32(116,168,148,(int)(220*alpha)), IM_COL32(116,168,148,(int)(220*alpha)), IM_COL32(194,166,118,(int)(220*alpha)));
-        }
-        dl->PopClipRect();
-        dl->AddRectFilled({x,y},{x+3.f,y+h},col,6.f,ImDrawFlags_RoundCornersLeft);
-        ImFont* nf = font::lexend_regular ? font::lexend_regular : ImGui::GetFont();
-        dl->AddText(nf, nf->LegacySize, {x+10.f,y+3.f},IM_COL32(0,0,0,(int)(160*alpha)),n.text);
-        dl->AddText(nf, nf->LegacySize, {x+9.f,y+2.f},col,n.text);
-        idx++;
-    }
-    g_notifs.erase(std::remove_if(g_notifs.begin(), g_notifs.end(), [](const Notification& n){return n.lifetime<=0.f;}), g_notifs.end());
-}
-
-// Telegram channel notification - menu-styled, 5 sec on load
-static void DrawTelegramNote(float sw, float sh){
-    UINT64 now = GetTickCount64();
-    if(g_telegramNoteStart == 0) g_telegramNoteStart = now;
-    if(now - g_telegramNoteStart > 5000) return;
-    float fade = 1.f - Clampf((float)(now - g_telegramNoteStart) / 4500.f, 0.f, 1.f) * 0.3f;  // slight fade near end
-    ImDrawList* dl = ImGui::GetForegroundDrawList();
-    if(!dl) return;
-    ImFont* bold = font::lexend_bold ? font::lexend_bold : ImGui::GetFont();
-    ImFont* reg = font::lexend_regular ? font::lexend_regular : ImGui::GetFont();
-    const char* line1 = "Don't forget to subscribe to telegram channel:";
-    const char* line2 = "t.me/luvr5rpp";
-    ImVec2 t1 = bold->CalcTextSizeA(14.f, FLT_MAX, 0.f, line1);
-    ImVec2 t2 = bold->CalcTextSizeA(16.f, FLT_MAX, 0.f, line2);
-    float pad = 20.f, w = (std::max)(t1.x, t2.x) + pad * 2.f, h = t1.y + t2.y + pad * 3.f;
-    ImVec2 pos{ sw * 0.5f - w * 0.5f, sh * 0.35f - h * 0.5f };
-    ImU32 bg = IM_COL32(18, 18, 26, (int)(240 * fade));
-    ImU32 border = IM_COL32((int)(g_accentColor[0] * 255), (int)(g_accentColor[1] * 255), (int)(g_accentColor[2] * 255), (int)(180 * fade));
-    ImU32 txt = IM_COL32(225, 225, 235, (int)(255 * fade));
-    ImU32 acc = IM_COL32((int)(g_accentColor[0] * 255), (int)(g_accentColor[1] * 255), (int)(g_accentColor[2] * 255), (int)(255 * fade));
-    dl->AddRectFilled(pos, { pos.x + w, pos.y + h }, bg, 10.f);
-    dl->AddRect(pos, { pos.x + w, pos.y + h }, border, 10.f, 0, 2.f);
-    dl->AddText(reg, 14.f, { pos.x + pad, pos.y + pad }, txt, line1);
-    dl->AddText(bold, 16.f, { pos.x + pad, pos.y + pad + t1.y + 8.f }, acc, line2);
-}
-
 static void DrawWatermark(float sw){
     if(!g_watermarkEnabled)return;
     ImDrawList* dl = ImGui::GetForegroundDrawList(); if(!dl) return;
-    ImFont* fBold = font::lexend_bold ? font::lexend_bold : ImGui::GetFont();
-    ImFont* fReg  = font::lexend_regular ? font::lexend_regular : ImGui::GetFont();
+    ImFont* fBold = font::bold ? font::bold : ImGui::GetFont();
+    ImFont* fReg  = font::regular ? font::regular : ImGui::GetFont();
     ImGuiIO& io   = ImGui::GetIO();
 
     SYSTEMTIME st{}; GetLocalTime(&st);
@@ -4888,22 +4778,10 @@ else if(g_espHealthPos==1){
             ImFont* font = espFont;
             float nameSize = g_espNameSize * s;
             ImVec2 ts=font->CalcTextSizeA(nameSize,FLT_MAX,0.f,e.name);
-            float padX = 7.f * s, padY = 4.f * s;
-            float tx=cx-ts.x*0.5f,ty=bt2-ts.y-7.f*s;
-            ImVec2 bgMin{tx - padX, ty - padY};
-            ImVec2 bgMax{tx + ts.x + padX, ty + ts.y + padY};
-            float nameRnd = 5.f * s;
-            dl->AddRectFilled(bgMin, bgMax, IM_COL32(16,17,24,(int)(172*alpha)), nameRnd);
-            dl->AddRect(bgMin, bgMax, IM_COL32(255,255,255,(int)(24*alpha)), nameRnd, 0, 1.f);
-            dl->AddRectFilled({bgMin.x+2.f, bgMax.y-2.f}, {bgMax.x-2.f, bgMax.y-0.5f},
-                IM_COL32((int)(ecol[0]*255),(int)(ecol[1]*255),(int)(ecol[2]*255),(int)(185*alpha)), 2.f);
-            for(int glow=2;glow>=1;glow--){
-                float o=(float)glow; int glowA=(int)(48*alpha/(float)glow);
-                dl->AddText(font,nameSize,{tx+o,ty},IM_COL32(0,0,0,glowA),e.name);
-                dl->AddText(font,nameSize,{tx-o,ty},IM_COL32(0,0,0,glowA),e.name);
-            }
-            dl->AddText(font,nameSize,{tx+1.f,ty+1.f},IM_COL32(0,0,0,(int)(140*alpha)),e.name);
-            dl->AddText(font,nameSize,{tx,ty},IM_COL32(234,236,244,(int)(alpha*255)),e.name);
+            float tx=cx-ts.x*0.5f,ty=bt2-ts.y-5.f*s;
+            // Plain text with 1px shadow
+            dl->AddText(font,nameSize,{tx+1.f,ty+1.f},IM_COL32(0,0,0,(int)(180*alpha)),e.name);
+            dl->AddText(font,nameSize,{tx,ty},IM_COL32(240,240,245,(int)(alpha*255)),e.name);
         }
         if(e.planting||e.flashed||e.scoped||e.defusing||e.hasBomb||e.hasKits){
             ImFont* sf = espFont;
@@ -5062,13 +4940,10 @@ else if(g_espHealthPos==1){
             dl->AddText(infoFont, infoSize, {tx,belowY},dimCol,dbuf);
             belowY += ts.y + 2.f * s;
         }
-        if(g_espSpotted&&e.spotted){
-            ImVec2 sp{br+7.f*s, bt2+7.f*s};
-            dl->AddCircle(sp,4.2f*s,IM_COL32(45,140,85,(int)(200*alpha)),12,1.25f);
-            dl->AddCircleFilled(sp,2.4f*s,IM_COL32(110,255,155,(int)(235*alpha)),12);
-            dl->AddCircle(sp,4.2f*s,IM_COL32(200,255,220,(int)(90*alpha)),12,0.85f);
-        }
+        // spotted circle removed per user request
     };
+    // AutoPeek marker removed
+
     for(int i=0;i<g_esp_count;i++) drawOne(g_esp_players[i], 1.f);
     bool inCur[65]={false};
     for(int i=0;i<g_esp_count;i++) if(g_esp_players[i].ent_index>=0&&g_esp_players[i].ent_index<=64) inCur[g_esp_players[i].ent_index]=true;
@@ -5212,14 +5087,14 @@ static void InitImGui(IDXGISwapChain*sc){
     io.ConfigErrorRecoveryEnableAssert=false;  // avoid crash on SetCursorPos/SetCursorScreenPos boundary (Pido)
     ImFontConfig fc{};fc.SizePixels=13.f;fc.FontDataOwnedByAtlas=false;
     // Verdana Bold 13px — clean, readable, premium feel
-    font::lexend_bold = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\verdanab.ttf", 13.f, nullptr, io.Fonts->GetGlyphRangesCyrillic());
-    if(!font::lexend_bold)
-        font::lexend_bold = io.Fonts->AddFontFromMemoryTTF((void*)lexend_bold, (int)sizeof(lexend_bold), 13.f, &fc, io.Fonts->GetGlyphRangesCyrillic());
+    font::bold = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\verdanab.ttf", 13.f, nullptr, io.Fonts->GetGlyphRangesCyrillic());
+    if(!font::bold)
+        font::bold = io.Fonts->AddFontFromMemoryTTF((void*)lexend_bold, (int)sizeof(lexend_bold), 13.f, &fc, io.Fonts->GetGlyphRangesCyrillic());
     fc.SizePixels=12.f;
     // Verdana Regular 12px
-    font::lexend_regular = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\verdana.ttf", 12.f, nullptr, io.Fonts->GetGlyphRangesCyrillic());
-    if(!font::lexend_regular)
-        font::lexend_regular = io.Fonts->AddFontFromMemoryTTF((void*)lexend_regular, (int)sizeof(lexend_regular), 12.f, &fc, io.Fonts->GetGlyphRangesCyrillic());
+    font::regular = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\verdana.ttf", 12.f, nullptr, io.Fonts->GetGlyphRangesCyrillic());
+    if(!font::regular)
+        font::regular = io.Fonts->AddFontFromMemoryTTF((void*)lexend_regular, (int)sizeof(lexend_regular), 12.f, &fc, io.Fonts->GetGlyphRangesCyrillic());
     font::esp_mono = io.Fonts->AddFontFromMemoryTTF((void*)jetbrains_mono_regular, (int)sizeof(jetbrains_mono_regular), 14.f, &fc, io.Fonts->GetGlyphRangesCyrillic());
     fc.SizePixels=20.f;
     static const ImWchar icomoonRanges[] = { 0x0020, 0x00FF, 0xE000, 0xE0FF, 0 };
@@ -5231,7 +5106,7 @@ static void InitImGui(IDXGISwapChain*sc){
     gunCfg.SizePixels = 16.f;
     gunCfg.PixelSnapH = true;
     font::gun_icons = io.Fonts->AddFontFromMemoryTTF((void*)cs2_gun_icons_ttf, (int)sizeof(cs2_gun_icons_ttf), 16.f, &gunCfg, gunRanges);
-    ImFont* font = font::lexend_bold;
+    ImFont* font = font::bold;
     if(!font) font = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 16.f, &fc, io.Fonts->GetGlyphRangesCyrillic());
     if(!font) font = io.Fonts->AddFontDefault(&fc);
     if(font) io.FontDefault = font;
@@ -5300,7 +5175,7 @@ static void RequestUnload(){
 static void RenderFrame(IDXGISwapChain*sc){
     if(g_unloading)return;
     g_swapChain = sc;
-    if(!g_firstFrame){DebugLog("[LitWare] first Present");g_firstFrame=true;g_telegramNoteStart=GetTickCount64();}
+    if(!g_firstFrame){DebugLog("[LitWare] first Present");g_firstFrame=true;}
     if(!g_imguiInitialized){InitImGui(sc);if(!g_imguiInitialized)return;}
     EnsureClientHooks();
     EnsureSceneHooks();
@@ -5331,9 +5206,12 @@ static void RenderFrame(IDXGISwapChain*sc){
     if(GetAsyncKeyState(VK_END)&1){RequestUnload();return;}
     if(!g_safeMode){
         BuildESPData();BuildSpectatorList();ProcessHitEvents();UpdateBombInfo();UpdateSoundPings();
-        RunNoFlash();RunNoSmoke();RunGlow();RunRadarHack();RunSkinChanger();
+        RunNoFlash();RunNoSmoke();RunGlow();RunRadarHack();/*RunSkinChanger();*/
         RunBHop();
+        RunWorldFog();
         RunFOVChanger();
+        third_person::Tick(g_client, ViewAnglesAddr(),
+            {g_thirdPerson, g_tpDist, g_tpHeightOffset});
         RunAutostop();RunRCS();RunAimbot();RunStrafeHelper();RunTriggerBot();ReleaseTriggerAttack();RunDoubleTap();
     }else{g_esp_count=0;g_esp_oof_count=0;}
     ImGui_ImplDX11_NewFrame();ImGui_ImplWin32_NewFrame();ImGui::NewFrame();
@@ -5355,13 +5233,13 @@ static void RenderFrame(IDXGISwapChain*sc){
     DrawMenu();
     DrawDebugConsole();
     DrawKeybindsWindow();
+    // Night mode overlay removed — world color controlled via sky hook (HookDrawSkyboxArray)
     if(!g_safeMode){ DrawESP(); DrawOofArrows(); DrawBombTimer(sw);
         DrawSoundPings(io.DeltaTime);
         DrawSpectatorList(sw); DrawNoCrosshair(sw, sh); DrawFovCircle(sw, sh); }
     DrawLogs(io.DeltaTime, sw, sh);
     DrawHitmarker(sw, sh);
     DrawDamageFloaters(sw, sh);
-    DrawNotifications(io.DeltaTime, sw, sh);
     DrawWatermark(sw);
     ImGui::Render();
     g_context->OMSetRenderTargets(1,&g_rtv,nullptr);
