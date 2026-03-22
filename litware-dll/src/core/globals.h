@@ -100,7 +100,6 @@ namespace globals {
     extern bool g_fovCircleEnabled;
     extern float g_fovCircleCol[4];
     extern bool g_aimbotTeamChk;
-    extern int g_aimbotBone;
     extern int g_aimbotWeaponFilter;
     extern bool g_rcsEnabled;
     extern float g_rcsX;
@@ -120,10 +119,7 @@ namespace globals {
     extern float g_antiAimSpeed;
     extern bool g_fovEnabled;
     extern float g_fovValue;
-    extern bool g_thirdPerson;
     extern bool g_autostopEnabled;
-    extern float g_tpDist;
-    extern float g_tpHeightOffset;
     extern bool g_snowEnabled;
     extern int g_snowDensity;
     extern bool g_sakuraEnabled;

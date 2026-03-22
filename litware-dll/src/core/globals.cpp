@@ -68,7 +68,6 @@ namespace globals {
     bool g_fovCircleEnabled = false;
     float g_fovCircleCol[4]{0.4f,0.7f,1.f,0.5f};
     bool g_aimbotTeamChk = true;
-    int g_aimbotBone = 0;
     int g_aimbotWeaponFilter = 0;
     bool g_rcsEnabled = false;
     float g_rcsX = 1.0f;
@@ -88,10 +87,7 @@ namespace globals {
     float g_antiAimSpeed = 180.f;
     bool g_fovEnabled = false;
     float g_fovValue = 90.f;
-    bool g_thirdPerson = false;
     bool g_autostopEnabled = false;
-    float g_tpDist = 120.f;
-    float g_tpHeightOffset = 30.f;
     bool g_snowEnabled = false;
     int g_snowDensity = 1;
     bool g_sakuraEnabled = false;

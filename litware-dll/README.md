@@ -26,10 +26,10 @@
 | Категория | Функции |
 |----------|---------|
 | **ESP** | Боксы (угловые/округлые/острые), скелет, полоса HP, имена, оружие, боеприпасы, деньги, дистанция, стрелки за экраном |
-| **Aimbot** | FOV, сглаживание, выбор кости, проверка тиммейтов |
+| **Aimbot** | FOV, сглаживание, голова (кость), проверка тиммейтов, опционально только цель под прицелом |
 | **Визуалы** | Без флешки, без дыма, glow, chams (враги/тим/ignore-z), цвет мира/неба, снег, сакура |
 | **Движение** | Bunny hop, strafe helper, anti-aim (spin/desync/jitter) |
-| **Разное** | Третье лицо, смена FOV, радар, таймер бомбы, список зрителей |
+| **Разное** | Смена FOV, радар, таймер бомбы, список зрителей |
 | **Конфиги** | Сохранение/загрузка в `%APPDATA%\litware\` |
 
 **Путь к конфигам:** `%APPDATA%\litware\` (например `C:\Users\<пользователь>\AppData\Roaming\litware\`)
@@ -140,10 +140,10 @@ GPL-3.0 — см. [LICENSE](LICENSE).
 | Category | Features |
 |----------|----------|
 | **ESP** | Boxes (corner/rounded/sharp), skeleton, health bar, names, weapons, ammo, money, distance, offscreen arrows |
-| **Aimbot** | FOV, smoothing, bone selection, team check |
+| **Aimbot** | FOV, smoothing, head bone, team check, optional crosshair-only (visibility) |
 | **Visuals** | No flash, no smoke, glow, chams (enemy/team/ignore-z), world/sky color, snow, sakura |
 | **Movement** | Bunny hop, strafe helper, anti-aim (spin/desync/jitter) |
-| **Misc** | Third person, FOV changer, radar, bomb timer, spectator list |
+| **Misc** | FOV changer, radar, bomb timer, spectator list |
 | **Config** | Save/load to `%APPDATA%\litware\` |
 
 **Config path:** `%APPDATA%\litware\` (e.g. `C:\Users\<user>\AppData\Roaming\litware\`)

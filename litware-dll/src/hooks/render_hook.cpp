@@ -8,7 +8,6 @@
 #include "../core/world_to_screen.h"
 #include "../core/esp_data.h"
 #include "../debug.h"
-#include "../modules/third_person.h"
 #include <MinHook.h>
 #include <d3d11.h>
 #include <dxgi.h>
@@ -159,8 +158,7 @@ static float g_aimbotSmooth = 15.1f;
 static bool g_fovCircleEnabled = false;
 static float g_fovCircleCol[4]{0.4f,0.7f,1.f,0.5f};  // R,G,B,A for FOV circle
 static bool g_aimbotTeamChk = true;
-static bool g_aimbotVisCheck = true;   // only aim at spotted targets
-static int g_aimbotBone = 0;
+static bool g_aimbotVisCheck = true;   // if true: only aim at pawn under crosshair (m_iIDEntIndex), same resolution as triggerbot
 static int g_aimbotWeaponFilter = 0;  // 0=All 1=Rifles 2=Snipers 3=Pistols
 static bool g_rcsEnabled = false;
 static float g_rcsX = 1.0f;
@@ -186,14 +184,11 @@ static int g_strafeKey = 0;
 static bool g_nightModeOverlay = false;  // dark fullscreen overlay (ImGui layer)
 static bool g_fovEnabled = false;
 static float g_fovValue = 121.f;
-static bool g_thirdPerson = false;
 static bool g_autostopEnabled = true;   // counter-strafe stop before first shot
 static bool g_waitAimThenFire = true;   // block +attack until aimbot on-target (with aim key)
 static float g_waitAimFovDeg = 2.5f;    // max angle delta to count as "locked"
 static float g_aimbotLastBestFov = 1e9f;
 static bool g_aimbotLastFound = false;
-static float g_tpDist = 120.f;
-static float g_tpHeightOffset = 30.f;
 static bool g_snowEnabled = false;
 static int g_snowDensity = 1;
 static bool g_sakuraEnabled = false;
@@ -1008,7 +1003,6 @@ static bool LoadConfigKeyAimbot(const std::string& key, const std::string& val, 
     if(key=="aimbot_team"){ g_aimbotTeamChk=ParseBool(val); return true; }
     if(key=="aimbot_vis"){ g_aimbotVisCheck=ParseBool(val); return true; }
     // auto_fire removed
-    if(key=="aimbot_bone"){ int v; if(ParseInt(val,v)) g_aimbotBone=v; else ok=false; return true; }
     if(key=="wait_aim_fire"){ g_waitAimThenFire=ParseBool(val); return true; }
     if(key=="wait_aim_deg"){ float v; if(ParseFloat(val,v)) g_waitAimFovDeg=v; else ok=false; return true; }
     if(key=="autostop"){ g_autostopEnabled=ParseBool(val); return true; }
@@ -1033,9 +1027,6 @@ static bool LoadConfigKeyMovement(const std::string& key, const std::string& val
     if(key=="night_mode_overlay"){ g_nightModeOverlay=ParseBool(val); return true; }
     if(key=="fov_enabled"){ g_fovEnabled=ParseBool(val); return true; }
     if(key=="fov_value"){ float v; if(ParseFloat(val,v)) g_fovValue=v; else ok=false; return true; }
-    if(key=="third_person"){ g_thirdPerson=ParseBool(val); return true; }
-    if(key=="tp_dist"){ float v; if(ParseFloat(val,v)) g_tpDist=v; else ok=false; return true; }
-    if(key=="tp_height"){ float v; if(ParseFloat(val,v)) g_tpHeightOffset=v; else ok=false; return true; }
     return false;
 }
 static bool LoadConfigKeyVisual(const std::string& key, const std::string& val, bool& ok){
@@ -1169,7 +1160,6 @@ static void ApplyDefaults(){
     g_fovCircleCol[0]=0.4f; g_fovCircleCol[1]=0.7f; g_fovCircleCol[2]=1.f; g_fovCircleCol[3]=0.5f;
     g_aimbotTeamChk = true;
     g_aimbotVisCheck = true;
-    g_aimbotBone = 0;
     g_rcsEnabled = false;
     g_rcsX = 1.0f;
     g_rcsY = 1.0f;
@@ -1187,9 +1177,6 @@ static void ApplyDefaults(){
     g_nightModeOverlay = false;
     g_fovEnabled = false;
     g_fovValue = 90.f;
-    g_thirdPerson = false;
-    g_tpDist = 120.f;
-    g_tpHeightOffset = 30.f;
     g_snowEnabled = false;
     g_snowDensity = 1;
     g_sakuraEnabled = false;
@@ -1315,7 +1302,6 @@ static bool SaveConfig(const char* name){
     WriteBool(out, "aimbot_team", g_aimbotTeamChk);
     WriteBool(out, "aimbot_vis", g_aimbotVisCheck);
 
-    WriteInt(out, "aimbot_bone", g_aimbotBone);
     WriteBool(out, "wait_aim_fire", g_waitAimThenFire);
     WriteFloat(out, "wait_aim_deg", g_waitAimFovDeg);
     WriteBool(out, "autostop", g_autostopEnabled);
@@ -1337,9 +1323,6 @@ static bool SaveConfig(const char* name){
     WriteBool(out, "night_mode_overlay", g_nightModeOverlay);
     WriteBool(out, "fov_enabled", g_fovEnabled);
     WriteFloat(out, "fov_value", g_fovValue);
-    WriteBool(out, "third_person", g_thirdPerson);
-    WriteFloat(out, "tp_dist", g_tpDist);
-    WriteFloat(out, "tp_height", g_tpHeightOffset);
     WriteBool(out, "fov_circle", g_fovCircleEnabled);
     WriteColor(out, "fov_circle_col", g_fovCircleCol);
     WriteBool(out, "hands_color_enabled", g_handsColorEnabled);
@@ -2201,41 +2184,38 @@ static void RunAimbot(){
         float fovDist=sqrtf(dPitch*dPitch+dYaw*dYaw);
         if(fovDist<bestDist){bestDist=fovDist;bestPoint=p;found=true;}
     };
+    // Crosshair pawn — same entity resolution as RunTriggerBot (m_iIDEntIndex + entity list)
+    uintptr_t crossPawn = 0;
+    if(g_aimbotVisCheck){
+        int crossIdx = Rd<int>(lp + offsets::cs_pawn::m_iIDEntIndex);
+        if(crossIdx > 0 && crossIdx <= 8192){
+            uintptr_t entityList = Rd<uintptr_t>(g_client + offsets::client::dwEntityList);
+            if(entityList){
+                uintptr_t pchunk = Rd<uintptr_t>(entityList + 8*((crossIdx&0x7FFF)>>9) + 16);
+                if(pchunk)
+                    crossPawn = Rd<uintptr_t>(pchunk + kEntityListStride * (crossIdx & 0x1FF));
+            }
+        }
+        if(!crossPawn || !IsLikelyPtr(crossPawn)) return;
+        int ls = Rd<uint8_t>(crossPawn + offsets::base_entity::m_lifeState);
+        if(ls != 0) return;
+        if(Rd<int>(crossPawn + offsets::base_entity::m_iHealth) <= 0) return;
+        if(g_aimbotTeamChk && (int)Rd<uint8_t>(crossPawn + offsets::base_entity::m_iTeamNum) == g_esp_local_team) return;
+    }
     // Path 1: use ESP cache (filled by BuildESPData same frame)
     for(int i=0;i<g_esp_count;i++){
         const ESPEntry&e=g_esp_players[i];
         if(!e.valid||!e.pawn||!IsLikelyPtr(e.pawn))continue;
         if(g_aimbotTeamChk&&e.team==g_esp_local_team)continue;
         if(e.distance>g_espMaxDist)continue;
-        if(g_aimbotVisCheck&&!e.spotted)continue;  // visibility check like triggerbot
+        if(g_aimbotVisCheck && e.pawn != crossPawn)continue;
         UpdatePawnBones(e.pawn);
-        Vec3 origin{e.origin_x,e.origin_y,e.origin_z};
-        // Bone targeting — try actual skeleton bones first, fall back to eye-offset
         auto getBone = [&](int id, Vec3& out) -> bool {
             return GetBonePos(e.pawn, id, out);
         };
-        Vec3 aimPoint{e.head_ox, e.head_oy, e.head_oz}; // default = eye position fallback
-        if(g_aimbotBone==0){ // Head
-            Vec3 bp{}; if(getBone(BONE_HEAD,bp)) aimPoint=bp;
-            evalPoint(aimPoint);
-        }else if(g_aimbotBone==1){ // Neck
-            Vec3 bp{}; if(getBone(BONE_NECK,bp)) aimPoint=bp;
-            evalPoint(aimPoint);
-        }else if(g_aimbotBone==2){ // Chest
-            Vec3 bp{}; if(getBone(BONE_SPINE3,bp)) aimPoint=bp;
-            evalPoint(aimPoint);
-        }else if(g_aimbotBone==3){ // Pelvis
-            Vec3 bp{}; if(getBone(BONE_PELVIS,bp)) aimPoint=bp;
-            evalPoint(aimPoint);
-        }else if(g_aimbotBone==4){ // Closest — scan all major bones
-            const int allBones[] = {BONE_HEAD,BONE_NECK,BONE_SPINE3,BONE_SPINE2,BONE_PELVIS,
-                                    BONE_ARM_UP_L,BONE_ARM_UP_R,BONE_LEG_UP_L,BONE_LEG_UP_R};
-            bool anyBone = false;
-            for(int b: allBones){ Vec3 bp{}; if(getBone(b,bp)){ evalPoint(bp); anyBone=true; } }
-            if(!anyBone) evalPoint(aimPoint);
-        }else{ // Fallback
-            evalPoint(aimPoint);
-        }
+        Vec3 aimPoint{e.head_ox, e.head_oy, e.head_oz};
+        { Vec3 bp{}; if(getBone(BONE_HEAD,bp)) aimPoint=bp; }
+        evalPoint(aimPoint);
     }
     // Path 2: if no ESP entries, iterate entity list directly (like TempleWare)
     if(!found){
@@ -2254,12 +2234,16 @@ static void RunAimbot(){
                 if(Rd<uint8_t>(pawn+offsets::base_entity::m_lifeState)!=0)continue;
                 if(Rd<int>(pawn+offsets::base_entity::m_iHealth)<=0)continue;
                 if(g_aimbotTeamChk && (int)Rd<uint8_t>(pawn+offsets::base_entity::m_iTeamNum)==localTeam)continue;
+                if(g_aimbotVisCheck && pawn != crossPawn)continue;
                 Vec3 origin=Rd<Vec3>(pawn+offsets::base_pawn::m_vOldOrigin);
                 uintptr_t scn=Rd<uintptr_t>(pawn+offsets::base_entity::m_pGameSceneNode); if(scn) origin=Rd<Vec3>(scn+offsets::scene_node::m_vecAbsOrigin);
                 Vec3 viewOff=Rd<Vec3>(pawn+offsets::base_pawn::m_vecViewOffset);
                 Vec3 head={origin.x+viewOff.x, origin.y+viewOff.y, origin.z+viewOff.z};
-                float dist=(head-localOrigin).length()/100.f; if(dist>g_espMaxDist)continue;
-                evalPoint(head);
+                UpdatePawnBones(pawn);
+                Vec3 aimPoint = head;
+                { Vec3 bp{}; if(GetBonePos(pawn, BONE_HEAD, bp)) aimPoint = bp; }
+                float dist=(aimPoint-localOrigin).length()/100.f; if(dist>g_espMaxDist)continue;
+                evalPoint(aimPoint);
             }
         }
     }
@@ -3665,15 +3649,13 @@ static void DrawMenu(){
         if(g_aimbotEnabled){
             PidoSliderFloat("FOV","", &g_aimbotFov, 1.f, 90.f, "%.1f");
             PidoSliderFloat("Smooth","", &g_aimbotSmooth, 1.f, 30.f, "%.1f");
-            const char* bones[]={"Head","Neck","Chest","Pelvis","Closest"};
-            PidoCombo("Bone","", &g_aimbotBone, bones, IM_ARRAYSIZE(bones));
             PidoKeybind("Aimbot key","", &g_aimbotKey);
             PidoToggle("FOV circle","", &g_fovCircleEnabled);
             if(g_fovCircleEnabled) PidoColorEdit4("FOV color","", g_fovCircleCol);
             PidoToggle("Autostop","", &g_autostopEnabled);
             PidoToggle("Wait aim then fire","", &g_waitAimThenFire);
             if(g_waitAimThenFire) PidoSliderFloat("Aim lock (deg)","", &g_waitAimFovDeg, 0.5f, 8.f, "%.2f");
-            PidoToggle("Visibility check","", &g_aimbotVisCheck);
+            PidoToggle("Crosshair target only","", &g_aimbotVisCheck);
             // Ragebot toggle removed
         }
         EndPidoGroup();
@@ -3838,8 +3820,8 @@ static void DrawMenu(){
         PidoToggle("Keybinds","", &g_keybindsEnabled);
         EndPidoGroup();
 
-        // Right column: View + Config stacked (third person module: modules/third_person.cpp)
-        float viewH   = grpH(5);
+        // Right column: View + Config stacked
+        float viewH   = grpH(2);
         float configH = contentH - viewH - gap;
         if (configH < 40.f * s) configH = 40.f * s;
 
@@ -3847,11 +3829,6 @@ static void DrawMenu(){
         BeginPidoGroup("##g_view", "View", {childW, viewH});
         PidoToggle("FOV changer","", &g_fovEnabled);
         PidoSliderFloat("FOV","", &g_fovValue, 70.f, 130.f, "%.0f");
-        PidoToggle("Third person","Camera behind pawn (alive only)", &g_thirdPerson);
-        if (g_thirdPerson) {
-            PidoSliderFloat("TP distance","Chase distance", &g_tpDist, 50.f, 200.f, "%.0f");
-            PidoSliderFloat("TP height","Vertical camera offset", &g_tpHeightOffset, 0.f, 100.f, "%.0f");
-        }
         EndPidoGroup();
 
         ImGui::SetCursorPos({rightX, contentY + viewH + gap});
@@ -5061,8 +5038,6 @@ static void RenderFrame(IDXGISwapChain*sc){
         RunNoFlash();RunNoSmoke();RunGlow();RunRadarHack();/*RunSkinChanger();*/
         RunBHop();
         RunFOVChanger();
-        third_person::Tick(g_client, ViewAnglesAddr(),
-            {g_thirdPerson, g_tpDist, g_tpHeightOffset});
         RunAutostop();RunAimbot();RunRCS();RunStrafeHelper();RunTriggerBot();ReleaseTriggerAttack();RunDoubleTap();RunAimFireGate();
     }else{g_esp_count=0;g_esp_oof_count=0;}
     ImGui_ImplDX11_NewFrame();ImGui_ImplWin32_NewFrame();ImGui::NewFrame();

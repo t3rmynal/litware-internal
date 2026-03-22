@@ -2,8 +2,6 @@
 
 ---
 
-## ⚠️ Still in development. Features that are unfinished/don't work or needs to be fixed: (Aimbot) Visibility Check; Third Person View 
-
 **Внутренний чит для Counter-Strike 2.** Инжектируется в `cs2.exe`, перехватывает DirectX 11 Present, рисует ImGui оверлей прямо в игре — без внешнего оверлея и задержки ввода.
 
 | | |
