@@ -187,9 +187,9 @@ static bool g_nightModeOverlay = false;  // dark fullscreen overlay (ImGui layer
 static bool g_fovEnabled = false;
 static float g_fovValue = 121.f;
 static bool g_thirdPerson = false;
-static bool g_autostopEnabled = false;  // counter-strafe stop before first shot
-static bool g_waitAimThenFire = false;   // block +attack until aimbot on-target (with aim key)
-static float g_waitAimFovDeg = 2.5f;     // max angle delta to count as "locked"
+static bool g_autostopEnabled = true;   // counter-strafe stop before first shot
+static bool g_waitAimThenFire = true;   // block +attack until aimbot on-target (with aim key)
+static float g_waitAimFovDeg = 2.5f;    // max angle delta to count as "locked"
 static float g_aimbotLastBestFov = 1e9f;
 static bool g_aimbotLastFound = false;
 static float g_tpDist = 120.f;
@@ -1218,8 +1218,9 @@ static void ApplyDefaults(){
     g_keybindsEnabled = true;
     g_hitNotifEnabled = true;
     g_killNotifEnabled = true;
-    g_waitAimThenFire = false;
+    g_waitAimThenFire = true;
     g_waitAimFovDeg = 2.5f;
+    g_autostopEnabled = true;
     g_hitSoundEnabled = false;
     g_hitSoundType = 1;
     g_radarEnabled = true;
@@ -3669,8 +3670,8 @@ static void DrawMenu(){
             PidoKeybind("Aimbot key","", &g_aimbotKey);
             PidoToggle("FOV circle","", &g_fovCircleEnabled);
             if(g_fovCircleEnabled) PidoColorEdit4("FOV color","", g_fovCircleCol);
-            PidoToggle("Autostop","Counter-strafe before first shot (aim+LMB)", &g_autostopEnabled);
-            PidoToggle("Wait aim then fire","Block shoot until on target", &g_waitAimThenFire);
+            PidoToggle("Autostop","", &g_autostopEnabled);
+            PidoToggle("Wait aim then fire","", &g_waitAimThenFire);
             if(g_waitAimThenFire) PidoSliderFloat("Aim lock (deg)","", &g_waitAimFovDeg, 0.5f, 8.f, "%.2f");
             PidoToggle("Visibility check","", &g_aimbotVisCheck);
             // Ragebot toggle removed
