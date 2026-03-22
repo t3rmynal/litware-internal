@@ -1,73 +1,30 @@
 # LitWare CS2 Internal
 
----
-
-**Внутренний чит для Counter-Strike 2.** Инжектируется в `cs2.exe`, перехватывает DirectX 11 Present, рисует ImGui оверлей прямо в игре — без внешнего оверлея и задержки ввода.
-
-| | |
-|---|---|
-| платформа | Windows x64 |
-| сборка | Visual Studio 2022 |
-| зависимости | Steam (gameoverlayrenderer64.dll), ImGui, MinHook, omath (submodule `vendor/omath`) |
-
----
-
-## Сборка
-
-1. `git clone --recurse-submodules` (submodules обязательны)
-2. Открыть `litware-dll/litware-dll.vcxproj` в Visual Studio
-3. Build → Release | x64
-4. DLL: `litware-dll/bin/Release/litware-dll.dll`
-
----
-
-## Управление
-
-| Клавиша | Действие |
-|---------|----------|
-| INSERT | Меню |
-| END | Выгрузка |
-
----
-
-## Конфиги
-
-`%APPDATA%\litware\`
-
----
-
-## Оффсеты
-
-`litware-dll/src/core/offsets.h` — синхронизированы с [cs2-dumper](https://github.com/a2x/cs2-dumper). После обновления игры обновляй оффсеты.
-
----
-
-## Лицензия
-
-MIT. Educational only. VAC bans possible.
-
----
-
----
-
-# LitWare CS2 Internal (English)
-
-Internal cheat for Counter-Strike 2. Injects into `cs2.exe`, hooks DirectX 11 Present, renders ImGui overlay in-game.
+Internal cheat for Counter-Strike 2. The DLL is injected into `cs2.exe`, hooks DirectX 11 `Present`, and renders an in-game ImGui overlay.
 
 | | |
 |---|---|
 | Platform | Windows x64 |
 | Build | Visual Studio 2022 |
-| Dependencies | Steam (gameoverlayrenderer64.dll), ImGui, MinHook, omath (submodule `vendor/omath`) |
+| Dependencies | Steam (`gameoverlayrenderer64.dll`), ImGui, MinHook, omath (`vendor/omath`) |
+| License | MIT |
 
 ---
 
 ## Build
 
-1. `git clone --recurse-submodules` (submodules required)
+1. `git clone --recurse-submodules`
 2. Open `litware-dll/litware-dll.vcxproj` in Visual Studio
-3. Build → Release | x64
+3. Build `Release | x64`
 4. Output: `litware-dll/bin/Release/litware-dll.dll`
+
+---
+
+## Screenshots
+
+| 1 | 2 | 3 |
+|:--:|:--:|:--:|
+| <img src="screenshots/1.png" width="320"> | <img src="screenshots/2.png" width="320"> | <img src="screenshots/3.png" width="320"> |
 
 ---
 
@@ -75,23 +32,39 @@ Internal cheat for Counter-Strike 2. Injects into `cs2.exe`, hooks DirectX 11 Pr
 
 | Key | Action |
 |-----|--------|
-| INSERT | Menu |
-| END | Unload |
+| `INSERT` | Toggle menu |
+| `END` | Unload |
 
 ---
 
 ## Configs
 
-`%APPDATA%\litware\`
+Configs are stored in `%APPDATA%\litware\` as plain-text `*.cfg` files.
+
+---
+
+## Features
+
+- ESP: boxes, skeleton, health, names, weapons, ammo, money, distance, offscreen arrows
+- Aimbot: FOV, smoothing, head bone, team check, optional crosshair-only target mode
+- Visuals: no flash, no smoke, glow, chams, world and sky color, snow, sakura
+- Movement: bunny hop, strafe helper, anti-aim
+- Misc: FOV changer, radar, bomb timer, spectator list
 
 ---
 
 ## Offsets
 
-`litware-dll/src/core/offsets.h` — synced with [cs2-dumper](https://github.com/a2x/cs2-dumper). Update offsets after game updates.
+Offsets are kept in `litware-dll/src/core/offsets.h` and refreshed from `cs2-dumper` after game updates.
 
 ---
 
-## License
+## Notes
 
-MIT. Educational only. VAC bans possible.
+- Steam must be running with the Steam Overlay enabled.
+- Inject after the game reaches the main menu.
+- No runtime network downloader is used by the DLL.
+
+---
+
+Use at your own risk. Game- or platform-side sanctions are possible.
