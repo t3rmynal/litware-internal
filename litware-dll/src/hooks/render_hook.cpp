@@ -1430,7 +1430,6 @@ static bool GetOofArrowPos(const float* vm, const Vec3& head, int sw, int sh, fl
 // BuildESPData
 static void BuildESPData(){
     g_esp_count=0;g_esp_oof_count=0;g_esp_local_team=0;g_esp_local_pawn=0;
-    g_esp_screen_w=1920;g_esp_screen_h=1080;
     g_localOrigin = {};
     // Visibility throttle: only clear cache when doing full read (every 3rd frame)
     static int s_visFrame = 0;
@@ -1441,10 +1440,15 @@ static void BuildESPData(){
     uintptr_t entityList=Rd<uintptr_t>(g_client+offsets::client::dwEntityList);
     if(!entityList)return;
     const float*vm=reinterpret_cast<const float*>(g_client+offsets::client::dwViewMatrix);
-    int sw=1920,sh=1080;
-    if(g_engine2){int w=Rd<int>(g_engine2+offsets::engine2::dwWindowWidth);
-    int h=Rd<int>(g_engine2+offsets::engine2::dwWindowHeight);
-    if(w>100&&h>100){sw=w;sh=h;}}
+    int sw=1920, sh=1080;
+    if(g_bbWidth >= 100 && g_bbHeight >= 100){
+        sw = (int)g_bbWidth;
+        sh = (int)g_bbHeight;
+    }else if(g_engine2){
+        int w = Rd<int>(g_engine2+offsets::engine2::dwWindowWidth);
+        int h = Rd<int>(g_engine2+offsets::engine2::dwWindowHeight);
+        if(w > 100 && h > 100){ sw = w; sh = h; }
+    }
     uintptr_t localPawn=Rd<uintptr_t>(g_client+offsets::client::dwLocalPlayerPawn);
     (void)Rd<uintptr_t>(g_client+offsets::client::dwLocalPlayerController); // localCtrl reserved
     int localTeam=0;Vec3 localOrigin{};
@@ -3482,7 +3486,10 @@ static void DrawMenu(){
     float menuW = 820.f * menuScale * animScale;
     float menuH = 540.f * menuScale * animScale;
     float sw=(float)g_esp_screen_w, sh=(float)g_esp_screen_h;
-    if(sw<100.f)sw=1920.f; if(sh<100.f)sh=1080.f;
+    if(sw < 100.f || sh < 100.f){
+        if(g_bbWidth >= 100){ sw = (float)g_bbWidth; } else if(sw < 100.f) sw = 1920.f;
+        if(g_bbHeight >= 100){ sh = (float)g_bbHeight; } else if(sh < 100.f) sh = 1080.f;
+    }
 
     ImGui::SetNextWindowSize(ImVec2(menuW,menuH), ImGuiCond_Always);
     float slideY = (1.f - animEased) * 10.f * menuScale;
@@ -5014,12 +5021,14 @@ static void RenderFrame(IDXGISwapChain*sc){
     EnsureSceneHooks();
     DXGI_SWAP_CHAIN_DESC desc{};
     if(SUCCEEDED(sc->GetDesc(&desc))){
-        if(desc.BufferDesc.Width!=g_bbWidth||desc.BufferDesc.Height!=g_bbHeight||desc.BufferDesc.Format!=g_bbFormat){
-            if(g_rtv){g_rtv->Release();g_rtv=nullptr;}
-            g_bbWidth=desc.BufferDesc.Width;
-            g_bbHeight=desc.BufferDesc.Height;
-            g_bbFormat=desc.BufferDesc.Format;
+        UINT nw = desc.BufferDesc.Width, nh = desc.BufferDesc.Height;
+        DXGI_FORMAT nf = desc.BufferDesc.Format;
+        if(nw != g_bbWidth || nh != g_bbHeight || nf != g_bbFormat){
+            if(g_rtv){ g_rtv->Release(); g_rtv = nullptr; }
         }
+        g_bbWidth = nw;
+        g_bbHeight = nh;
+        g_bbFormat = nf;
     }
     if(!g_rtv){ID3D11Texture2D*bb=nullptr;
         if(g_device&&SUCCEEDED(sc->GetBuffer(0,__uuidof(ID3D11Texture2D),(void**)&bb))){
@@ -5043,9 +5052,19 @@ static void RenderFrame(IDXGISwapChain*sc){
         RunBHop();
         RunFOVChanger();
         RunAutostop();RunAimbot();RunRCS();RunStrafeHelper();RunTriggerBot();ReleaseTriggerAttack();RunDoubleTap();RunAimFireGate();
-    }else{g_esp_count=0;g_esp_oof_count=0;}
-    ImGui_ImplDX11_NewFrame();ImGui_ImplWin32_NewFrame();ImGui::NewFrame();
-    ImGuiIO&io=ImGui::GetIO();
+    }else{
+        g_esp_count=0;g_esp_oof_count=0;
+        if(g_bbWidth >= 100 && g_bbHeight >= 100){
+            g_esp_screen_w = (int)g_bbWidth;
+            g_esp_screen_h = (int)g_bbHeight;
+        }
+    }
+    ImGui_ImplDX11_NewFrame();
+    ImGui_ImplWin32_NewFrame();
+    ImGuiIO& io = ImGui::GetIO();
+    if(g_bbWidth > 0 && g_bbHeight > 0)
+        io.DisplaySize = ImVec2((float)g_bbWidth, (float)g_bbHeight);
+    ImGui::NewFrame();
     io.MouseDrawCursor = g_menuOpen;
     if(g_menuOpen&&g_gameHwnd){
         RECT r{}; GetWindowRect(g_gameHwnd,&r);
