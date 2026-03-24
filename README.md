@@ -45,10 +45,10 @@ Configs are stored in `%APPDATA%\litware\` as plain-text `*.cfg` files.
 
 ## Features
 
-- ESP: boxes, skeleton, health, names, weapons, ammo, money, distance, offscreen arrows
-- Aimbot: FOV, smoothing, head bone, team check, optional crosshair-only target mode
-- Visuals: no flash, no smoke, glow, chams, world and sky color, snow, sakura
-- Movement: bunny hop, strafe helper, anti-aim
+- ESP: boxes, health, names, weapons, ammo, money, distance, offscreen arrows
+- Aimbot: FOV, smoothing, head bone, team check
+- Visuals: no flash, no smoke, glow, sky color, snow, sakura
+- Movement: bunny hop, strafe helper
 - Misc: FOV changer, radar, bomb timer, spectator list
 
 ---
@@ -63,7 +63,6 @@ Offsets are kept in `litware-dll/src/core/offsets.h` and refreshed from `cs2-dum
 
 - Steam must be running with the Steam Overlay enabled.
 - Inject after the game reaches the main menu.
-- No runtime network downloader is used by the DLL.
 
 ---
 
