@@ -11,9 +11,15 @@ Internal cheat for Counter-Strike 2. The DLL is injected into `cs2.exe`, hooks D
 
 ---
 
+## Developing on Linux
+
+The DLL targets **Windows x64** only; you cannot build or run it against the native Linux CS2 client. On Linux you can still clone, initialize submodules, and edit the tree. See [docs/LINUX.md](docs/LINUX.md) for setup (`./scripts/setup-dev-linux.sh`), line endings, and workflow notes.
+
+---
+
 ## Build
 
-1. `git clone --recurse-submodules`
+1. `git clone --recurse-submodules` (if submodules are missing, see [docs/LINUX.md](docs/LINUX.md))
 2. Open `litware-dll/litware-dll.vcxproj` in Visual Studio
 3. Build `Release | x64`
 4. Output: `litware-dll/bin/Release/litware-dll.dll`

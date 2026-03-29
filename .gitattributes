@@ -1,0 +1,5 @@
+# Normalized line endings for cross-platform clones (Linux/macOS/Windows).
+* text=auto
+
+# Shell and tooling must use LF so they run on Linux and macOS.
+*.sh text eol=lf
