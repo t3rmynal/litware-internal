@@ -13,7 +13,7 @@ Internal cheat for Counter-Strike 2. The DLL is injected into `cs2.exe`, hooks D
 
 ## Developing on Linux
 
-The DLL targets **Windows x64** only; you cannot build or run it against the native Linux CS2 client. On Linux you can still clone, initialize submodules, and edit the tree. See [docs/LINUX.md](docs/LINUX.md) for setup (`./scripts/setup-dev-linux.sh`), line endings, and workflow notes.
+The **`linux-compat`** branch is for editing the repo on Linux (submodules, line endings, docs)—not for running the cheat on native Linux CS2. The DLL targets **Windows x64** only. See [docs/LINUX.md](docs/LINUX.md) for setup (`./scripts/setup-dev-linux.sh`) and workflow notes.
 
 ---
 

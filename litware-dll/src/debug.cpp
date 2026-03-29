@@ -1,5 +1,5 @@
 #include "debug.h"
-#include <Windows.h>
+#include "platform/compat.h"
 #include <cstdarg>
 #include <cstdio>
 #include <ctime>
@@ -33,14 +33,12 @@ void BootstrapLog(const char* fmt, ...) {
         if (g_logs.size() > 500) g_logs.erase(g_logs.begin());
     }
 
-    char path[MAX_PATH];
-    if (GetTempPathA(MAX_PATH, path) == 0) return;
     char fullPath[MAX_PATH];
-    snprintf(fullPath, sizeof(fullPath), "%slitware_dll.log", path);
-    FILE* f = nullptr;
-    if (fopen_s(&f, fullPath, "a") != 0 || !f) return;
+    snprintf(fullPath, sizeof(fullPath), "/tmp/litware_dll.log");
+    FILE* f = fopen(fullPath, "a");
+    if (!f) return;
     time_t t; time(&t);
-    struct tm lt; if (localtime_s(&lt, &t) == 0)
+    struct tm lt; if (localtime_r(&t, &lt))
         fprintf(f, "[%02d:%02d:%02d] ", lt.tm_hour, lt.tm_min, lt.tm_sec);
     fprintf(f, "%s\n", buf);
     fclose(f);
@@ -60,14 +58,11 @@ void DebugLog(const char* fmt, ...) {
     }
 
 #ifdef LITWARE_DEBUG
-    char path[MAX_PATH];
-    if (GetTempPathA(MAX_PATH, path) == 0) return;
-
     char fullPath[MAX_PATH];
-    snprintf(fullPath, sizeof(fullPath), "%slitware_dll.log", path);
+    snprintf(fullPath, sizeof(fullPath), "/tmp/litware_dll.log");
 
-    FILE* f = nullptr;
-    if (fopen_s(&f, fullPath, "a") != 0 || !f) return;
+    FILE* f = fopen(fullPath, "a");
+    if (!f) return;
 
     fprintf(f, "%s\n", buf);
     fclose(f);

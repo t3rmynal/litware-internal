@@ -8,14 +8,8 @@
 #include "../core/world_to_screen.h"
 #include "../core/esp_data.h"
 #include "../debug.h"
-#include <MinHook.h>
-#include <d3d11.h>
-#include <dxgi.h>
+#include "../platform/compat.h"
 #include <imgui.h>
-#include <imgui_impl_dx11.h>
-#include <imgui_impl_win32.h>
-#include <Windows.h>
-#include <Psapi.h>
 #include <cstring>
 #include <cstdint>
 #include <cstdio>
@@ -34,6 +28,15 @@
 #include <chrono>
 #include <random>
 
+#ifdef _WIN32
+#include <MinHook.h>
+#include <d3d11.h>
+#include <dxgi.h>
+#include <imgui_impl_dx11.h>
+#include <imgui_impl_win32.h>
+#include <Windows.h>
+#include <Psapi.h>
+
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "Psapi.lib")
@@ -41,6 +44,7 @@
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
 extern HMODULE g_thisModule;
+#endif
 
 namespace {
 

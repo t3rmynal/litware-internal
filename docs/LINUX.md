@@ -1,5 +1,11 @@
 # Developing on Linux
 
+## What the `linux-compat` branch is
+
+The **`linux-compat`** branch adds a **comfortable Linux workflow for this repo** only: `.gitattributes`, `scripts/setup-dev-linux.sh`, and this guide. It does **not** add a Linux build of the DLL, Vulkan/OpenGL hooks, or support for the native Linux CS2 client. Playing with the cheat in-game still requires **Windows x64** as in the main README.
+
+---
+
 Counter-Strike 2 and this project’s output (`litware-dll.dll`) run on **Windows x64**. You cannot build or inject this DLL on native Linux for the Linux game client: it depends on the Windows CS2 process, Win32, and DirectX 11.
 
 This guide covers **using Linux for the repository**—cloning, submodules, editing sources and docs, and integrating with a Windows build machine when you need a binary.

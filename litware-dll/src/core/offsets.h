@@ -1,34 +1,45 @@
 #pragma once
 #include <cstdint>
 
-// обновлено 2026 03 19
+// обновлено 2026 03 29 (Linux CS2)
 namespace offsets {
 
     namespace client {
-        constexpr uintptr_t dwCSGOInput             = 0x2319FC0;
-        constexpr uintptr_t dwEntityList            = 0x24AF268;
-        constexpr uintptr_t dwGlobalVars            = 0x205E5C0;
-        constexpr uintptr_t dwLocalPlayerController = 0x22F4188;
-        constexpr uintptr_t dwLocalPlayerPawn       = 0x2069B50;
-        constexpr uintptr_t dwViewAngles            = 0x231A648;
-        constexpr uintptr_t dwViewMatrix            = 0x230FF20;
-        constexpr uintptr_t dwGlowManager           = 0x230ACE8;
+        constexpr uintptr_t dwCSGOInput             = 0x231B2E0;
+        constexpr uintptr_t dwEntityList            = 0x24B0258;
+        constexpr uintptr_t dwGlobalVars            = 0x205F540;
+        constexpr uintptr_t dwLocalPlayerController = 0x22F5028;
+        constexpr uintptr_t dwLocalPlayerPawn       = 0x206A9E0;
+        constexpr uintptr_t dwViewAngles            = 0x231B968;
+        constexpr uintptr_t dwViewMatrix            = 0x2310F10;
+        constexpr uintptr_t dwGlowManager           = 0x230BCD8;
+        constexpr uintptr_t dwPlantedC4             = 0x2318A60;
+        constexpr uintptr_t dwGameRules             = 0x230EED0;
+        constexpr uintptr_t dwPrediction            = 0x206A8F0;
+        constexpr uintptr_t dwViewRender            = 0x2311328;
+        constexpr uintptr_t dwWeaponC4              = 0x229A2B0;
+        constexpr uintptr_t dwSensitivity           = 0x230C7E8;
     }
 
     namespace engine2 {
-        constexpr uintptr_t dwWindowWidth  = 0x90C8F0;
-        constexpr uintptr_t dwWindowHeight = 0x90C8F4;
+        constexpr uintptr_t dwWindowWidth  = 0x90D998;
+        constexpr uintptr_t dwWindowHeight = 0x90D99C;
+        constexpr uintptr_t dwBuildNumber  = 0x60E514;
+        constexpr uintptr_t dwNetworkGameClient = 0x9095D0;
     }
 
     namespace buttons {
-        constexpr uintptr_t attack  = 0x20628F0;
-        constexpr uintptr_t attack2 = 0x2062980;
-        constexpr uintptr_t forward = 0x2062B30;
-        constexpr uintptr_t back    = 0x2062BC0;
-        constexpr uintptr_t left    = 0x2062C50;
-        constexpr uintptr_t right   = 0x2062CE0;
-        constexpr uintptr_t jump    = 0x2062E00;
-        constexpr uintptr_t duck    = 0x2062E90;
+        constexpr uintptr_t attack   = 0x2063760;
+        constexpr uintptr_t attack2  = 0x20637F0;
+        constexpr uintptr_t forward  = 0x20639A0;
+        constexpr uintptr_t back     = 0x2063A30;
+        constexpr uintptr_t left     = 0x2063AC0;
+        constexpr uintptr_t right    = 0x2063B50;
+        constexpr uintptr_t jump     = 0x2063C70;
+        constexpr uintptr_t duck     = 0x2063D00;
+        constexpr uintptr_t reload   = 0x20636D0;
+        constexpr uintptr_t sprint   = 0x2063640;
+        constexpr uintptr_t use      = 0x2063BE0;
     }
 
     namespace base_entity {

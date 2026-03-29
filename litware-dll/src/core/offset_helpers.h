@@ -4,6 +4,9 @@
 #ifdef _WIN32
 #include <Windows.h>
 #endif
+#ifdef __linux__
+#include "../platform/linux/proc_maps.h"
+#endif
 
 // вспомогательные адреса
 namespace offset_helpers {
@@ -23,6 +26,22 @@ inline uintptr_t matchmaking_dll_base() {
 }
 inline uintptr_t soundsystem_dll_base() {
     return uintptr_t(::GetModuleHandleA("soundsystem.dll"));
+}
+#elif defined(__linux__)
+inline uintptr_t client_dll_base() {
+    return proc_maps::get_module_base("libclient");
+}
+inline uintptr_t engine2_dll_base() {
+    return proc_maps::get_module_base("libengine2");
+}
+inline uintptr_t inputsystem_dll_base() {
+    return proc_maps::get_module_base("libinputsystem");
+}
+inline uintptr_t matchmaking_dll_base() {
+    return proc_maps::get_module_base("libmatchmaking");
+}
+inline uintptr_t soundsystem_dll_base() {
+    return proc_maps::get_module_base("libsoundsystem");
 }
 #endif
 
