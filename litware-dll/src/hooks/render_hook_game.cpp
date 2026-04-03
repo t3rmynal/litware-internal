@@ -226,97 +226,125 @@ static void DrawOverlayWatermarkChrome(ImDrawList* dl, ImVec2 p0, ImVec2 p1, flo
         IM_COL32(194,166,118,220), IM_COL32(116,168,148,220), IM_COL32(116,168,148,220), IM_COL32(194,166,118,220));
 }
 
+struct OverlayBarItem{
+    std::string text;
+    ImU32 color;
+    bool bold;
+};
+
+static ImVec2 DrawOverlayWatermarkBar(ImDrawList* dl, ImFont* fBold, ImFont* fReg, float anchorX, float y,
+    const std::vector<OverlayBarItem>& items, bool alignRight, float minW = 0.f){
+    if(!dl || items.empty()) return {0.f, 0.f};
+
+    const float padX = 8.f;
+    const float padY = 4.f;
+    const float dotR = 1.5f;
+    const ImU32 colBg = IM_COL32(16,16,16,245);
+    const ImU32 colBorder = IM_COL32(64,64,64,220);
+    const ImU32 colInner = IM_COL32(8,8,8,210);
+    const ImU32 colDim = IM_COL32(140,140,140,255);
+
+    std::vector<ImVec2> sizes;
+    sizes.reserve(items.size());
+
+    float contentW = 0.f;
+    float maxH = 0.f;
+    for(size_t i = 0; i < items.size(); ++i){
+        ImFont* fontUse = items[i].bold ? fBold : fReg;
+        float fontSize = items[i].bold ? 12.f : 11.f;
+        ImVec2 sz = fontUse->CalcTextSizeA(fontSize, FLT_MAX, 0.f, items[i].text.c_str());
+        sizes.push_back(sz);
+        if(i > 0) contentW += 6.f;
+        contentW += sz.x;
+        if(i + 1 < items.size()) contentW += 8.f;
+        if(sz.y > maxH) maxH = sz.y;
+    }
+
+    float barW = (std::max)(minW, contentW + padX * 2.f);
+    float barH = maxH + padY * 2.f;
+    float x = alignRight ? (anchorX - barW) : anchorX;
+
+    dl->AddRectFilled({x,y},{x+barW,y+barH}, colBg, 2.f);
+    dl->AddRect({x,y},{x+barW,y+barH}, colBorder, 2.f, 0, 1.f);
+    dl->AddRect({x+1.f,y+1.f},{x+barW-1.f,y+barH-1.f}, colInner, 2.f, 0, 1.f);
+
+    float gx0 = x + 2.f;
+    float gy0 = y + 1.f;
+    float gy1 = y + 3.f;
+    float gq1 = x + barW * 0.33f;
+    float gq2 = x + barW * 0.66f;
+    float gx1 = x + barW - 2.f;
+    dl->AddRectFilledMultiColor({gx0,gy0},{gq1,gy1},
+        IM_COL32(108,132,188,220), IM_COL32(174,122,190,220), IM_COL32(174,122,190,220), IM_COL32(108,132,188,220));
+    dl->AddRectFilledMultiColor({gq1,gy0},{gq2,gy1},
+        IM_COL32(174,122,190,220), IM_COL32(194,166,118,220), IM_COL32(194,166,118,220), IM_COL32(174,122,190,220));
+    dl->AddRectFilledMultiColor({gq2,gy0},{gx1,gy1},
+        IM_COL32(194,166,118,220), IM_COL32(116,168,148,220), IM_COL32(116,168,148,220), IM_COL32(194,166,118,220));
+
+    float cx = x + padX;
+    float midY = y + barH * 0.5f;
+    for(size_t i = 0; i < items.size(); ++i){
+        if(i > 0){
+            dl->AddCircleFilled({cx, midY}, dotR, colDim);
+            cx += 6.f;
+        }
+        ImFont* fontUse = items[i].bold ? fBold : fReg;
+        float fontSize = items[i].bold ? 12.f : 11.f;
+        dl->AddText(fontUse, fontSize, {cx, midY - sizes[i].y * 0.5f}, items[i].color, items[i].text.c_str());
+        cx += sizes[i].x;
+        if(i + 1 < items.size()) cx += 8.f;
+    }
+
+    return {barW, barH};
+}
+
 static void DrawSpectatorList(float sw){
     if(!g_spectatorListEnabled) return;
     if(g_spectatorCount == 0 && !g_weAreSpectating) return;
     ImDrawList* dl = ImGui::GetForegroundDrawList(); if(!dl) return;
     ImFont* fBold = font::bold    ? font::bold    : ImGui::GetFont();
     ImFont* fReg  = font::regular ? font::regular : ImGui::GetFont();
+    const float margin = 12.f;
+    const float gap = 6.f;
+    const ImU32 colAccent = IM_COL32(220,220,220,255);
+    const ImU32 colText = IM_COL32(220,220,220,255);
+    const ImU32 colDim = IM_COL32(140,140,140,255);
 
-    const float margin  = 15.f;
-    const float padX    = 12.f;
-    const float padY    = 10.f;
-    const float rnd     = 8.f;
-    const float lineH   = 22.f;
-    const float headerH = 30.f;
-
-    float yBase = margin;
-    if(g_watermarkEnabled){
-        yBase += 34.f + 8.f;
+    float y = margin;
+    if(g_watermarkEnabled && g_watermarkOverlayHeight > 0.f){
+        y += g_watermarkOverlayHeight + 8.f;
     }
 
-    const ImU32 colAccent  = IM_COL32((int)(g_accentColor[0]*255),(int)(g_accentColor[1]*255),(int)(g_accentColor[2]*255),255);
-    const ImU32 colAccentD = IM_COL32((int)(g_accentColor[0]*160),(int)(g_accentColor[1]*160),(int)(g_accentColor[2]*160),255);
-    const ImU32 colText    = IM_COL32(215, 220, 230, 255);
-    const ImU32 colDim     = IM_COL32(100, 105, 118, 255);
-    const ImU32 colSep     = IM_COL32(32, 34, 42, 255);
-    const ImU32 colRowHov  = IM_COL32(255, 255, 255, 8);
-
     if(g_weAreSpectating && g_spectatingTarget[0]){
-        ImVec2 szTarget = fReg->CalcTextSizeA(fReg->LegacySize, FLT_MAX, 0.f, g_spectatingTarget);
-        const char* prefix = "WATCHING";
-        ImVec2 szPrefix  = fBold->CalcTextSizeA(fBold->LegacySize, FLT_MAX, 0.f, prefix);
-        float pillW = padX + szPrefix.x + 8.f + szTarget.x + padX;
-        pillW = (std::max)(pillW, 140.f);
-        float pillH = headerH;
-        float px = sw - pillW - margin;
-        float py = yBase;
-        DrawOverlayWatermarkChrome(dl, {px, py}, {px+pillW, py+pillH}, rnd);
-        dl->AddRectFilled({px, py+4.f}, {px+2.f, py+pillH-4.f}, colAccent, 2.f);
-        float midY = py + pillH * 0.5f;
-        dl->AddText(fBold, fBold->LegacySize, {px+padX, midY - szPrefix.y*0.5f}, colAccent, prefix);
-        dl->AddText(fReg,  fReg->LegacySize,  {px+padX+szPrefix.x+8.f, midY - szTarget.y*0.5f}, colText, g_spectatingTarget);
+        std::vector<OverlayBarItem> watching{
+            {"spectators", colAccent, true},
+            {"watching", colDim, false},
+            {g_spectatingTarget, colText, false},
+        };
+        DrawOverlayWatermarkBar(dl, fBold, fReg, sw - margin, y, watching, true, 180.f);
         return;
     }
 
     if(g_spectatorCount <= 0) return;
 
-    float maxNameW = 60.f;
-    for(int i = 0; i < g_spectatorCount; i++){
-        ImVec2 ts = fReg->CalcTextSizeA(fReg->LegacySize, FLT_MAX, 0.f, g_spectatorNames[i]);
-        if(ts.x > maxNameW) maxNameW = ts.x;
-    }
-
-    const char* hdrLabel = "SPECTATORS";
-    ImVec2 szHdr = fBold->CalcTextSizeA(fBold->LegacySize, FLT_MAX, 0.f, hdrLabel);
-    char cntBuf[8]; std::snprintf(cntBuf, sizeof(cntBuf), "%d", g_spectatorCount);
-    ImVec2 szCnt = fReg->CalcTextSizeA(fReg->LegacySize, FLT_MAX, 0.f, cntBuf);
-    float badgeW = szCnt.x + 10.f;
-    float badgeH = 16.f;
-
-    float boxW = (std::max)(maxNameW + padX*2.f, szHdr.x + padX*2.f + badgeW + 6.f + padX);
-    boxW = (std::max)(boxW, 130.f);
-    float boxH = headerH + 1.f + (float)g_spectatorCount * lineH + padY;
-
-    float x = sw - boxW - margin;
-    float y = yBase;
-
-    dl->AddRectFilled({x-3.f, y-3.f}, {x+boxW+3.f, y+boxH+3.f}, IM_COL32(0,0,0,55), rnd+2.f);
-    DrawOverlayWatermarkChrome(dl, {x, y}, {x+boxW, y+boxH}, rnd);
-    dl->AddRectFilled({x+1.f, y+1.f}, {x+boxW-1.f, y+headerH}, IM_COL32(10,10,14,140), rnd, ImDrawFlags_RoundCornersTop);
-    dl->AddLine({x+2.f, y+headerH}, {x+boxW-2.f, y+headerH}, colSep, 1.f);
-    dl->AddRectFilled({x, y+4.f}, {x+2.f, y+boxH-4.f}, colAccent, 2.f);
-
-    float hMid = y + headerH * 0.5f;
-    dl->AddText(fBold, fBold->LegacySize, {x+padX, hMid - szHdr.y*0.5f}, colAccent, hdrLabel);
-
-    float badgeX = x + boxW - padX - badgeW;
-    float badgeY = hMid - badgeH * 0.5f;
-    dl->AddRectFilled({badgeX, badgeY}, {badgeX+badgeW, badgeY+badgeH}, colAccentD, badgeH*0.5f);
-    dl->AddText(fReg, fReg->LegacySize, {badgeX + (badgeW-szCnt.x)*0.5f, badgeY + (badgeH-szCnt.y)*0.5f}, IM_COL32(255,255,255,230), cntBuf);
+    char cntBuf[8];
+    std::snprintf(cntBuf, sizeof(cntBuf), "%d", g_spectatorCount);
+    std::vector<OverlayBarItem> header{
+        {"spectators", colAccent, true},
+        {cntBuf, colText, false},
+    };
+    ImVec2 headerSize = DrawOverlayWatermarkBar(dl, fBold, fReg, sw - margin, y, header, true, 160.f);
+    y += headerSize.y + gap;
 
     for(int i = 0; i < g_spectatorCount; i++){
-        float ey = y + headerH + 1.f + (float)i * lineH;
-        float eMid = ey + lineH * 0.5f;
-
-        if(i % 2 == 0)
-            dl->AddRectFilled({x+1.f, ey}, {x+boxW-1.f, ey+lineH}, colRowHov);
-
-        char idxBuf[4]; std::snprintf(idxBuf, sizeof(idxBuf), "%d", i+1);
-        ImVec2 szIdx = fReg->CalcTextSizeA(fReg->LegacySize, FLT_MAX, 0.f, idxBuf);
-        dl->AddText(fReg, fReg->LegacySize, {x+padX, eMid - szIdx.y*0.5f}, colDim, idxBuf);
-
-        dl->AddText(fReg, fReg->LegacySize, {x+padX+18.f, eMid - szIdx.y*0.5f}, colText, g_spectatorNames[i]);
+        char idxBuf[8];
+        std::snprintf(idxBuf, sizeof(idxBuf), "#%d", i + 1);
+        std::vector<OverlayBarItem> row{
+            {idxBuf, colDim, false},
+            {g_spectatorNames[i], colText, false},
+        };
+        ImVec2 rowSize = DrawOverlayWatermarkBar(dl, fBold, fReg, sw - margin, y, row, true, 150.f);
+        y += rowSize.y + gap;
     }
 }
 

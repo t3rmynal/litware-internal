@@ -253,7 +253,10 @@ static void DrawKillEffect(float sw, float sh){
 }
 
 static void DrawWatermark(float sw){
-    if(!g_watermarkEnabled)return;
+    if(!g_watermarkEnabled){
+        g_watermarkOverlayHeight = 0.f;
+        return;
+    }
     ImDrawList* dl = ImGui::GetForegroundDrawList(); if(!dl) return;
     ImFont* fBold = font::bold ? font::bold : ImGui::GetFont();
     ImFont* fReg  = font::regular ? font::regular : ImGui::GetFont();
@@ -262,66 +265,21 @@ static void DrawWatermark(float sw){
     SYSTEMTIME st{}; GetLocalTime(&st);
     char timeBuf[16]; std::snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", st.wHour, st.wMinute);
     const float fps    = io.Framerate;
-    const float padX   = 8.f;
-    const float padY   = 4.f;
-    const float dotR   = 1.5f;
     const char* label = "litware";
     char fpsBuf[16]; std::snprintf(fpsBuf, sizeof(fpsBuf), "%.0f", fps);
     const char* pingBuf = "ping 0";
 
-    ImVec2 szLabel = fBold->CalcTextSizeA(12.f, FLT_MAX, 0.f, label);
-    ImVec2 szFps   = fReg->CalcTextSizeA(11.f, FLT_MAX, 0.f, fpsBuf);
-    ImVec2 szTime  = fReg->CalcTextSizeA(11.f, FLT_MAX, 0.f, timeBuf);
-    ImVec2 szPing  = fReg->CalcTextSizeA(11.f, FLT_MAX, 0.f, pingBuf);
-
-    float contentW = szLabel.x + 8.f + szTime.x + 8.f + szPing.x + 20.f;
-    if(g_showFpsWatermark) contentW += szFps.x + 8.f;
-    float barW = (std::max)(170.f, contentW + padX * 2.f);
-    float barH = (std::max)({szLabel.y, szFps.y, szTime.y, szPing.y}) + padY * 2.f;
-    float x = sw - barW - 12.f;
-    float y = 12.f;
-
-    const ImU32 colBg = IM_COL32(16,16,16,245);
-    const ImU32 colBorder = IM_COL32(64,64,64,220);
-    const ImU32 colInner = IM_COL32(8,8,8,210);
     const ImU32 colAccent = IM_COL32(220,220,220,255);
     const ImU32 colText = IM_COL32(220,220,220,255);
     const ImU32 colDim = IM_COL32(140,140,140,255);
-
-    dl->AddRectFilled({x,y},{x+barW,y+barH}, colBg, 2.f);
-    dl->AddRect({x,y},{x+barW,y+barH}, colBorder, 2.f, 0, 1.f);
-    dl->AddRect({x+1.f,y+1.f},{x+barW-1.f,y+barH-1.f}, colInner, 2.f, 0, 1.f);
-    float gx0 = x + 2.f;
-    float gy0 = y + 1.f;
-    float gy1 = y + 3.f;
-    float gq1 = x + barW * 0.33f;
-    float gq2 = x + barW * 0.66f;
-    float gx1 = x + barW - 2.f;
-    dl->AddRectFilledMultiColor({gx0,gy0},{gq1,gy1},
-        IM_COL32(108,132,188,220), IM_COL32(174,122,190,220), IM_COL32(174,122,190,220), IM_COL32(108,132,188,220));
-    dl->AddRectFilledMultiColor({gq1,gy0},{gq2,gy1},
-        IM_COL32(174,122,190,220), IM_COL32(194,166,118,220), IM_COL32(194,166,118,220), IM_COL32(174,122,190,220));
-    dl->AddRectFilledMultiColor({gq2,gy0},{gx1,gy1},
-        IM_COL32(194,166,118,220), IM_COL32(116,168,148,220), IM_COL32(116,168,148,220), IM_COL32(194,166,118,220));
-
-    float cx = x + padX;
-    float midY = y + barH*0.5f;
-    auto drawSep = [&](ImU32 col){
-        dl->AddCircleFilled({cx, midY}, dotR, col);
-        cx += 6.f;
+    std::vector<OverlayBarItem> items{
+        {label, colAccent, true},
     };
-    dl->AddText(fBold, 12.f, {cx, midY - szLabel.y*0.5f}, colAccent, label);
-    cx += szLabel.x + 8.f;
-    if(g_showFpsWatermark){
-        drawSep(colDim);
-        dl->AddText(fReg, 11.f, {cx, midY - szFps.y*0.5f}, colText, fpsBuf);
-        cx += szFps.x + 8.f;
-    }
-    drawSep(colDim);
-    dl->AddText(fReg, 11.f, {cx, midY - szTime.y*0.5f}, colDim, timeBuf);
-    cx += szTime.x + 8.f;
-    drawSep(colDim);
-    dl->AddText(fReg, 11.f, {cx, midY - szPing.y*0.5f}, colDim, pingBuf);
+    if(g_showFpsWatermark) items.push_back({fpsBuf, colText, false});
+    items.push_back({timeBuf, colDim, false});
+    items.push_back({pingBuf, colDim, false});
+    ImVec2 size = DrawOverlayWatermarkBar(dl, fBold, fReg, sw - 12.f, 12.f, items, true, 170.f);
+    g_watermarkOverlayHeight = size.y;
 }
 
 static void DrawNoCrosshair(float sw,float sh){

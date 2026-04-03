@@ -1287,49 +1287,30 @@ static void DrawKeybindsWindow(){
 
     ImFont* fBold = font::bold ? font::bold : ImGui::GetFont();
     ImFont* fReg = font::regular ? font::regular : ImGui::GetFont();
-    const char* title = "KEYBINDS";
-    ImVec2 szTitle = fBold->CalcTextSizeA(fBold->LegacySize, FLT_MAX, 0.f, title);
-    float maxLeft = szTitle.x;
-    float maxRight = 46.f;
-    for(int i = 0; i < rowCount; i++){
-        const char* state = rows[i].always ? "always" : KeyName(rows[i].key);
-        ImVec2 szLeft = fReg->CalcTextSizeA(fReg->LegacySize, FLT_MAX, 0.f, rows[i].label);
-        ImVec2 szRight = fReg->CalcTextSizeA(fReg->LegacySize, FLT_MAX, 0.f, state);
-        if(szLeft.x > maxLeft) maxLeft = szLeft.x;
-        if(szRight.x > maxRight) maxRight = szRight.x;
-    }
+    const float margin = 12.f;
+    const float gap = 6.f;
+    const ImU32 colAccent = IM_COL32(220,220,220,255);
+    const ImU32 colText = IM_COL32(220,220,220,255);
+    const ImU32 colDim = IM_COL32(140,140,140,255);
 
-    const float margin = 15.f;
-    const float padX = 12.f;
-    const float padY = 10.f;
-    const float rnd = 8.f;
-    const float lineH = 22.f;
-    const float headerH = 30.f;
-    float boxW = maxLeft + maxRight + padX * 2.f + 24.f;
-    float boxH = headerH + 1.f + (float)rowCount * lineH + padY;
-    float x = margin;
+    char cntBuf[8];
+    std::snprintf(cntBuf, sizeof(cntBuf), "%d", rowCount);
     float y = margin;
-
-    dl->AddRectFilled({x-3.f, y-3.f}, {x+boxW+3.f, y+boxH+3.f}, IM_COL32(0,0,0,55), rnd+2.f);
-    DrawOverlayWatermarkChrome(dl, {x, y}, {x+boxW, y+boxH}, rnd);
-    dl->AddRectFilled({x+1.f, y+1.f}, {x+boxW-1.f, y+headerH}, IM_COL32(10,10,14,140), rnd, ImDrawFlags_RoundCornersTop);
-    dl->AddLine({x+2.f, y+headerH}, {x+boxW-2.f, y+headerH}, IM_COL32(32,34,42,255), 1.f);
-    dl->AddRectFilled({x, y+4.f}, {x+2.f, y+boxH-4.f}, IM_COL32((int)(g_accentColor[0]*255),(int)(g_accentColor[1]*255),(int)(g_accentColor[2]*255),255), 2.f);
-    dl->AddText(fBold, fBold->LegacySize, {x+padX, y + headerH*0.5f - szTitle.y*0.5f}, IM_COL32(220,220,220,255), title);
+    std::vector<OverlayBarItem> header{
+        {"keybinds", colAccent, true},
+        {cntBuf, colText, false},
+    };
+    ImVec2 headerSize = DrawOverlayWatermarkBar(dl, fBold, fReg, margin, y, header, false, 150.f);
+    y += headerSize.y + gap;
 
     for(int i = 0; i < rowCount; i++){
-        float rowY = y + headerH + 1.f + (float)i * lineH;
-        float rowMid = rowY + lineH * 0.5f;
-        if((i % 2) == 0){
-            dl->AddRectFilled({x+1.f, rowY}, {x+boxW-1.f, rowY+lineH}, IM_COL32(255,255,255,8));
-        }
-
-        const char* state = rows[i].always ? "always" : KeyName(rows[i].key);
-        ImU32 leftCol = IM_COL32(215,220,230,255);
-        ImU32 rightCol = rows[i].active ? IM_COL32(140,220,160,255) : IM_COL32(120,125,138,255);
-        ImVec2 szLeft = fReg->CalcTextSizeA(fReg->LegacySize, FLT_MAX, 0.f, rows[i].label);
-        ImVec2 szRight = fReg->CalcTextSizeA(fReg->LegacySize, FLT_MAX, 0.f, state);
-        dl->AddText(fReg, fReg->LegacySize, {x+padX, rowMid - szLeft.y*0.5f}, leftCol, rows[i].label);
-        dl->AddText(fReg, fReg->LegacySize, {x+boxW-padX-szRight.x, rowMid - szRight.y*0.5f}, rightCol, state);
+        std::string state = rows[i].always ? "always" : KeyName(rows[i].key);
+        ImU32 stateCol = rows[i].active ? IM_COL32(140,220,160,255) : colDim;
+        std::vector<OverlayBarItem> row{
+            {rows[i].label, colText, true},
+            {state, stateCol, false},
+        };
+        ImVec2 rowSize = DrawOverlayWatermarkBar(dl, fBold, fReg, margin, y, row, false, 170.f);
+        y += rowSize.y + gap;
     }
 }

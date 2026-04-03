@@ -204,6 +204,7 @@ static bool g_worldColorEnabled = false;
 static float g_worldColor[4]{0.92f, 0.94f, 1.f, 1.f};
 static bool g_watermarkEnabled = true;
 static bool g_showFpsWatermark = true;
+static float g_watermarkOverlayHeight = 0.f;
 static bool g_spectatorListEnabled = false;
 static bool g_hitNotifEnabled = true;
 static bool g_killNotifEnabled = true;
