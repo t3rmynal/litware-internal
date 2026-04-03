@@ -514,7 +514,6 @@ static void EnsureSkinRegen(){
 }
 
 static void RunSkinChanger(){
-    return;
     if(!g_client) return;
     if(!g_skinEnabled){
         if(g_skinForceUpdate){
@@ -554,16 +553,15 @@ static void RunSkinChanger(){
 }
 
 static void RunAutostop(){
-    if(!g_autostopEnabled||!g_client)return;
-    if(g_menuOpen) return;
+    if(!g_autostopEnabled||!g_client||g_menuOpen){ ClearAutostopInput(); return; }
     bool aimHeld = (GetAsyncKeyState(g_aimbotKey) & 0x8000) != 0;
     bool fireHeld = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
-    if(!aimHeld || !fireHeld) return;
-    uintptr_t lp=Rd<uintptr_t>(g_client+offsets::client::dwLocalPlayerPawn);if(!lp)return;
+    if(!aimHeld || !fireHeld){ ClearAutostopInput(); return; }
+    uintptr_t lp=Rd<uintptr_t>(g_client+offsets::client::dwLocalPlayerPawn);if(!lp){ ClearAutostopInput(); return; }
     int shots = Rd<int>(lp + offsets::cs_pawn::m_iShotsFired);
-    if(shots > 0) return;
+    if(shots > 0){ ClearAutostopInput(); return; }
     uintptr_t vaAddr = ViewAnglesAddr();
-    if(!vaAddr) return;
+    if(!vaAddr){ ClearAutostopInput(); return; }
     __try{
         Vec3 vel = Rd<Vec3>(lp + offsets::base_entity::m_vecVelocity);
         float yawDeg = Rd<float>(vaAddr + 4);
@@ -572,11 +570,12 @@ static void RunAutostop(){
         float forward = vel.x * cosY + vel.y * sinY;
         float side = -vel.x * sinY + vel.y * cosY;
         const float dz = 12.f;
-        if(fabsf(forward) < dz && fabsf(side) < dz) return;
+        if(fabsf(forward) < dz && fabsf(side) < dz){ ClearAutostopInput(); return; }
         Wr<int>(g_client + offsets::buttons::forward, forward < -dz ? 65537 : 0);
         Wr<int>(g_client + offsets::buttons::back,    forward > dz ? 65537 : 0);
         Wr<int>(g_client + offsets::buttons::left,    side > dz ? 65537 : 0);
         Wr<int>(g_client + offsets::buttons::right,   side < -dz ? 65537 : 0);
+        g_autostopOwned = true;
     }__except(EXCEPTION_EXECUTE_HANDLER){}
 }
 
@@ -658,20 +657,19 @@ static void RunRCS(){
 }
 
 static void RunStrafeHelper(){
-    if(!g_strafeEnabled||!g_client) return;
-    if(g_menuOpen) return;
-    if(g_strafeKey!=0&&!(GetAsyncKeyState(g_strafeKey)&0x8000)) return;
-    uintptr_t lp=Rd<uintptr_t>(g_client+offsets::client::dwLocalPlayerPawn); if(!lp) return;
-    if(Rd<uint32_t>(lp+offsets::base_entity::m_fFlags)&1) return;
+    if(!g_strafeEnabled||!g_client||g_menuOpen){ ClearStrafeInput(); return; }
+    if(g_strafeKey!=0&&!(GetAsyncKeyState(g_strafeKey)&0x8000)){ ClearStrafeInput(); return; }
+    uintptr_t lp=Rd<uintptr_t>(g_client+offsets::client::dwLocalPlayerPawn); if(!lp){ ClearStrafeInput(); return; }
+    if(Rd<uint32_t>(lp+offsets::base_entity::m_fFlags)&1){ ClearStrafeInput(); return; }
     
-    uintptr_t vaAddr=ViewAnglesAddr(); if(!vaAddr) return;
+    uintptr_t vaAddr=ViewAnglesAddr(); if(!vaAddr){ ClearStrafeInput(); return; }
     float curYaw=Rd<float>(vaAddr+4);
     static float s_lastYaw = 0.f;
     float delta = curYaw - s_lastYaw;
     if(delta > 180.f) delta -= 360.f; else if(delta < -180.f) delta += 360.f;
     s_lastYaw = curYaw;
 
-    if(fabsf(delta) < 0.1f) return;
+    if(fabsf(delta) < 0.1f){ ClearStrafeInput(); return; }
 
     if(delta > 0.f){
         Wr<int>(g_client+offsets::buttons::left,  65537);
@@ -680,25 +678,26 @@ static void RunStrafeHelper(){
         Wr<int>(g_client+offsets::buttons::right, 65537);
         Wr<int>(g_client+offsets::buttons::left,  0);
     }
+    g_strafeOwned = true;
 }
 
 static constexpr int kEntityListStride = 112;
 static void RunTriggerBot(){
-    if(!g_tbEnabled||!g_client)return;
-    if(g_tbKey!=0&&!(GetAsyncKeyState(g_tbKey)&0x8000)){g_tbShouldFire=false;return;}
-    uintptr_t lp=Rd<uintptr_t>(g_client+offsets::client::dwLocalPlayerPawn);if(!lp)return;
+    if(!g_tbEnabled||!g_client||g_menuOpen){ ClearTriggerInput(); return; }
+    if(g_tbKey!=0&&!(GetAsyncKeyState(g_tbKey)&0x8000)){ ClearTriggerInput(); return; }
+    uintptr_t lp=Rd<uintptr_t>(g_client+offsets::client::dwLocalPlayerPawn);if(!lp){ ClearTriggerInput(); return; }
     int entIdx=Rd<int>(lp+offsets::cs_pawn::m_iIDEntIndex);
-    if(entIdx<=0||entIdx>8192){g_tbShouldFire=false;return;}
-    uintptr_t entityList=Rd<uintptr_t>(g_client+offsets::client::dwEntityList);if(!entityList)return;
-    uintptr_t pchunk=Rd<uintptr_t>(entityList+8*((entIdx&0x7FFF)>>9)+16);if(!pchunk)return;
+    if(entIdx<=0||entIdx>8192){ ClearTriggerInput(); return; }
+    uintptr_t entityList=Rd<uintptr_t>(g_client+offsets::client::dwEntityList);if(!entityList){ ClearTriggerInput(); return; }
+    uintptr_t pchunk=Rd<uintptr_t>(entityList+8*((entIdx&0x7FFF)>>9)+16);if(!pchunk){ ClearTriggerInput(); return; }
     uintptr_t targPawn=Rd<uintptr_t>(pchunk+kEntityListStride*(entIdx&0x1FF));
-    if(!targPawn||!IsLikelyPtr(targPawn)){g_tbShouldFire=false;return;}
+    if(!targPawn||!IsLikelyPtr(targPawn)){ ClearTriggerInput(); return; }
     int lifeState=Rd<uint8_t>(targPawn+offsets::base_entity::m_lifeState);
-    if(lifeState!=0){g_tbShouldFire=false;return;}
+    if(lifeState!=0){ ClearTriggerInput(); return; }
     int targTeam=(int)Rd<uint8_t>(targPawn+offsets::base_entity::m_iTeamNum);
     int targHealth=Rd<int>(targPawn+offsets::base_entity::m_iHealth);
-    if(targHealth<=0){g_tbShouldFire=false;return;}
-    if(g_tbTeamChk&&targTeam==g_esp_local_team){g_tbShouldFire=false;return;}
+    if(targHealth<=0){ ClearTriggerInput(); return; }
+    if(g_tbTeamChk&&targTeam==g_esp_local_team){ ClearTriggerInput(); return; }
     if(!g_tbShouldFire){g_tbShouldFire=true;g_tbFireTime=GetTickCount64()+(UINT64)g_tbDelay;}
     if(GetTickCount64()>=g_tbFireTime){
         Wr<int>(g_client+offsets::buttons::attack,65537);
@@ -709,7 +708,7 @@ static void RunTriggerBot(){
 }
 
 static void ReleaseTriggerAttack(){
-    if(!g_client||!g_tbEnabled)return;
+    if(!g_client||!g_tbEnabled||g_menuOpen){ ClearTriggerInput(); return; }
     if(g_tbJustFired && g_tbHoldFramesLeft>0){
         Wr<int>(g_client+offsets::buttons::attack,65537);
         g_tbHoldFramesLeft--;
@@ -822,9 +821,10 @@ static void RunAimbot(){
 
 
 static void RunDoubleTap(){
-    if(!g_dtEnabled||!g_client) return;
-    if(!(GetAsyncKeyState(g_dtKey)&0x8000)) return;
+    if(!g_dtEnabled||!g_client||g_menuOpen){ ClearDtInput(); return; }
+    if(g_dtKey==0||!(GetAsyncKeyState(g_dtKey)&0x8000)){ ClearDtInput(); return; }
     Wr<int>(g_client+offsets::buttons::attack,65537);
+    g_dtOwned = true;
 }
 
 static void RunAimFireGate(){

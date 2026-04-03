@@ -9,6 +9,7 @@ static bool IsInputMessage(UINT msg){
         case WM_SYSCHAR:
         case WM_SYSKEYDOWN:
         case WM_SYSKEYUP:
+            return true;
         default:
             return false;
     }

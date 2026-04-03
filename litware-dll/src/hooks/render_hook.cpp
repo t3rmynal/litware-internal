@@ -289,6 +289,7 @@ static SkeetUiMetrics g_skeetUi;
 
 static inline float Clampf(float v, float lo, float hi);
 template<typename T> static inline T Rd(uintptr_t addr);
+template<typename T> static inline void Wr(uintptr_t addr,T val);
 static void DrawFilledEllipse(ImDrawList* dl, const ImVec2& center, float rx, float ry, ImU32 col, int segments);
 static void DrawRotatedQuad(ImDrawList* dl, ImVec2 center, float w, float h, float angle, ImU32 col);
 
@@ -313,6 +314,9 @@ static void UpdatePidoraisePalette(float fade = 1.f) {
 static char g_configName[64] = "default";
 static int g_configSelected = -1;
 static std::vector<std::string> g_configList;
+static bool g_autostopOwned = false;
+static bool g_strafeOwned = false;
+static bool g_dtOwned = false;
 
 static int g_lastHealth[ESP_MAX_PLAYERS + 1] = {};
 static bool g_seenThisFrame[ESP_MAX_PLAYERS + 1] = {};
@@ -366,6 +370,59 @@ static inline ImU32 LerpColor(ImU32 a, ImU32 b, float t){
 static inline uintptr_t ViewAnglesAddr(){
     if(!g_client) return 0;
     return g_client + offsets::client::dwViewAngles;
+}
+
+static void ReleaseMoveButtons(){
+    if(!g_client) return;
+    Wr<int>(g_client + offsets::buttons::forward, 0);
+    Wr<int>(g_client + offsets::buttons::back, 0);
+    Wr<int>(g_client + offsets::buttons::left, 0);
+    Wr<int>(g_client + offsets::buttons::right, 0);
+}
+
+static void ReleaseStrafeButtons(){
+    if(!g_client) return;
+    Wr<int>(g_client + offsets::buttons::left, 0);
+    Wr<int>(g_client + offsets::buttons::right, 0);
+}
+
+static void ReleaseAttackButton(){
+    if(!g_client) return;
+    Wr<int>(g_client + offsets::buttons::attack, 0);
+}
+
+static void ClearAutostopInput(){
+    if(!g_autostopOwned) return;
+    ReleaseMoveButtons();
+    g_autostopOwned = false;
+}
+
+static void ClearStrafeInput(){
+    if(!g_strafeOwned) return;
+    ReleaseStrafeButtons();
+    g_strafeOwned = false;
+}
+
+static void ClearDtInput(){
+    if(!g_dtOwned) return;
+    ReleaseAttackButton();
+    g_dtOwned = false;
+}
+
+static void ClearTriggerInput(){
+    if(g_tbShouldFire || g_tbJustFired) ReleaseAttackButton();
+    g_tbShouldFire = false;
+    g_tbFireTime = 0;
+    g_tbJustFired = false;
+    g_tbHoldFramesLeft = 0;
+}
+
+static void ReleaseRuntimeInputs(){
+    ClearAutostopInput();
+    ClearStrafeInput();
+    ClearDtInput();
+    ClearTriggerInput();
+    if(g_client) Wr<int>(g_client + offsets::buttons::jump, 0);
 }
 
 static Vec2 CalcAngle(Vec3 from,Vec3 to){
@@ -677,7 +734,7 @@ static void InitImGui(IDXGISwapChain*sc){
     g_bbFormat = desc.BufferDesc.Format;
     ID3D11Texture2D*bb=nullptr;
     if(FAILED(sc->GetBuffer(0,__uuidof(ID3D11Texture2D),(void**)&bb))||!bb)return;
-    if(FAILED(sc->GetDevice(__uuidof(ID3D11Device),(void**)&g_device))||!g_device)return;
+    if(FAILED(sc->GetDevice(__uuidof(ID3D11Device),(void**)&g_device))||!g_device){bb->Release();return;}
     g_device->GetImmediateContext(&g_context);
     if(!g_context){g_device->Release();g_device=nullptr;bb->Release();return;}
     HRESULT hr = g_device->CreateRenderTargetView(bb,nullptr,&g_rtv);
@@ -791,6 +848,7 @@ static void DoDeferredUnload(){
 
 static void RequestUnload(){
     if(g_unloading) return;
+    ReleaseRuntimeInputs();
     g_unloading = true;
     g_pendingUnload = true;
 }
@@ -826,14 +884,20 @@ static void RenderFrame(IDXGISwapChain*sc){
         }if(!g_rtv)return;
     }
     if(GetAsyncKeyState(VK_INSERT)&1)g_menuOpen=!g_menuOpen;
-    if(GetAsyncKeyState(VK_END)&1){RequestUnload();return;}
+    if(GetAsyncKeyState(VK_END)&1){ReleaseRuntimeInputs();RequestUnload();return;}
     if(!g_safeMode){
         BuildESPData();BuildSpectatorList();ProcessHitEvents();UpdateBombInfo();UpdateSoundPings();
         RunNoFlash();RunNoSmoke();RunGlow();RunRadarHack();
-        RunBHop();
+        RunSkinChanger();
         RunFOVChanger();
-        RunAutostop();RunAimbot();RunRCS();RunStrafeHelper();RunTriggerBot();ReleaseTriggerAttack();RunDoubleTap();RunAimFireGate();
+        if(g_menuOpen){
+            ReleaseRuntimeInputs();
+        }else{
+            RunBHop();
+            RunAutostop();RunAimbot();RunRCS();RunStrafeHelper();RunTriggerBot();ReleaseTriggerAttack();RunDoubleTap();RunAimFireGate();
+        }
     }else{
+        ReleaseRuntimeInputs();
         g_esp_count=0;g_esp_oof_count=0;
         if(g_bbWidth >= 100 && g_bbHeight >= 100){
             g_esp_screen_w = (int)g_bbWidth;
@@ -877,8 +941,9 @@ static void RenderFrame(IDXGISwapChain*sc){
 HRESULT __stdcall HookPresent(IDXGISwapChain*sc,UINT sync,UINT flags){
     static DWORD s_lastCrashTime = 0;
     static int s_crashCount = 0;
+    bool shouldUnload = g_pendingUnload.load();
     __try {
-        if(!g_pendingUnload) RenderFrame(sc);
+        if(!shouldUnload) RenderFrame(sc);
         s_crashCount = 0;
     } __except(EXCEPTION_EXECUTE_HANDLER) {
         s_crashCount++;
@@ -893,8 +958,9 @@ HRESULT __stdcall HookPresent(IDXGISwapChain*sc,UINT sync,UINT flags){
             PushNotification("Crash caught - safe mode. Enable ESP to retry.", IM_COL32(255,100,80,255));
         }
     }
-    if(g_pendingUnload) DoDeferredUnload();
-    return g_originalPresent(sc,sync,flags);
+    HRESULT hr = g_originalPresent ? g_originalPresent(sc,sync,flags) : S_OK;
+    if(g_pendingUnload.load()) DoDeferredUnload();
+    return hr;
 }
 
 static bool GetPresentVtable(void*&out){
