@@ -727,9 +727,6 @@ static void RunAimbot(){
     if(g_menuOpen) return;
     if(!(GetAsyncKeyState(g_aimbotKey)&0x8000))return;
     uintptr_t lp=Rd<uintptr_t>(g_client+offsets::client::dwLocalPlayerPawn);if(!lp)return;
-    bool lmbHeld = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
-    int shotsFired = Rd<int>(lp + offsets::cs_pawn::m_iShotsFired);
-    if(g_rcsEnabled && lmbHeld && shotsFired >= 1) return;
     uintptr_t vaAddr=ViewAnglesAddr();if(!vaAddr)return;
     uintptr_t sc0=Rd<uintptr_t>(lp+offsets::base_entity::m_pGameSceneNode);Vec3 localOrigin{};
     if(sc0)localOrigin=Rd<Vec3>(sc0+offsets::scene_node::m_vecAbsOrigin);
@@ -743,35 +740,14 @@ static void RunAimbot(){
         float fovDist=sqrtf(dPitch*dPitch+dYaw*dYaw);
         if(fovDist<bestDist){bestDist=fovDist;bestPoint=p;found=true;}
     };
-    uintptr_t crossPawn = 0;
-    if(g_aimbotVisCheck){
-        int crossIdx = Rd<int>(lp + offsets::cs_pawn::m_iIDEntIndex);
-        if(crossIdx > 0 && crossIdx <= 8192){
-            uintptr_t entityList = Rd<uintptr_t>(g_client + offsets::client::dwEntityList);
-            if(entityList){
-                uintptr_t pchunk = Rd<uintptr_t>(entityList + 8*((crossIdx&0x7FFF)>>9) + 16);
-                if(pchunk)
-                    crossPawn = Rd<uintptr_t>(pchunk + kEntityListStride * (crossIdx & 0x1FF));
-            }
-        }
-        if(!crossPawn || !IsLikelyPtr(crossPawn)) return;
-        int ls = Rd<uint8_t>(crossPawn + offsets::base_entity::m_lifeState);
-        if(ls != 0) return;
-        if(Rd<int>(crossPawn + offsets::base_entity::m_iHealth) <= 0) return;
-        if(g_aimbotTeamChk && (int)Rd<uint8_t>(crossPawn + offsets::base_entity::m_iTeamNum) == g_esp_local_team) return;
-    }
     for(int i=0;i<g_esp_count;i++){
         const ESPEntry&e=g_esp_players[i];
         if(!e.valid||!e.pawn||!IsLikelyPtr(e.pawn))continue;
         if(g_aimbotTeamChk&&e.team==g_esp_local_team)continue;
         if(e.distance>g_espMaxDist)continue;
-        if(g_aimbotVisCheck && e.pawn != crossPawn)continue;
-        UpdatePawnBones(e.pawn);
-        auto getBone = [&](int id, Vec3& out) -> bool {
-            return GetBonePos(e.pawn, id, out);
-        };
-        Vec3 aimPoint{e.head_ox, e.head_oy, e.head_oz};
-        { Vec3 bp{}; if(getBone(BONE_HEAD,bp)) aimPoint=bp; }
+        if(g_aimbotVisCheck && !e.visible)continue;
+        Vec3 aimPoint{};
+        if(!ResolveAimbotPoint(e.pawn, {e.head_ox, e.head_oy, e.head_oz}, aimPoint))continue;
         evalPoint(aimPoint);
     }
     if(!found){
@@ -790,14 +766,16 @@ static void RunAimbot(){
                 if(Rd<uint8_t>(pawn+offsets::base_entity::m_lifeState)!=0)continue;
                 if(Rd<int>(pawn+offsets::base_entity::m_iHealth)<=0)continue;
                 if(g_aimbotTeamChk && (int)Rd<uint8_t>(pawn+offsets::base_entity::m_iTeamNum)==localTeam)continue;
-                if(g_aimbotVisCheck && pawn != crossPawn)continue;
+                if(g_aimbotVisCheck){
+                    bool spotted = Rd<bool>(pawn + offsets::spotted::m_entitySpottedState + offsets::spotted::m_bSpotted);
+                    if(!spotted) continue;
+                }
                 Vec3 origin=Rd<Vec3>(pawn+offsets::base_pawn::m_vOldOrigin);
                 uintptr_t scn=Rd<uintptr_t>(pawn+offsets::base_entity::m_pGameSceneNode); if(scn) origin=Rd<Vec3>(scn+offsets::scene_node::m_vecAbsOrigin);
                 Vec3 viewOff=Rd<Vec3>(pawn+offsets::base_pawn::m_vecViewOffset);
                 Vec3 head={origin.x+viewOff.x, origin.y+viewOff.y, origin.z+viewOff.z};
-                UpdatePawnBones(pawn);
-                Vec3 aimPoint = head;
-                { Vec3 bp{}; if(GetBonePos(pawn, BONE_HEAD, bp)) aimPoint = bp; }
+                Vec3 aimPoint{};
+                if(!ResolveAimbotPoint(pawn, head, aimPoint)) continue;
                 float dist=(aimPoint-localOrigin).length()/100.f; if(dist>g_espMaxDist)continue;
                 evalPoint(aimPoint);
             }

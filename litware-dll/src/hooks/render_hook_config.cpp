@@ -324,6 +324,7 @@ static bool LoadConfigKeyAimbot(const std::string& key, const std::string& val, 
     if(key=="aimbot_key"){ int v; if(ParseInt(val,v)) g_aimbotKey=v; else ok=false; return true; }
     if(key=="aimbot_fov"){ float v; if(ParseFloat(val,v)) g_aimbotFov=v; else ok=false; return true; }
     if(key=="aimbot_smooth"){ float v; if(ParseFloat(val,v)) g_aimbotSmooth=v; else ok=false; return true; }
+    if(key=="aimbot_bone"){ int v; if(ParseInt(val,v)) g_aimbotBone=v; else ok=false; return true; }
     if(key=="fov_circle"){ g_fovCircleEnabled=ParseBool(val); return true; }
     if(key=="fov_circle_col"){ if(!ParseColor4(val,g_fovCircleCol)) ok=false; return true; }
     if(key=="aimbot_team"){ g_aimbotTeamChk=ParseBool(val); return true; }
@@ -480,10 +481,11 @@ static void ApplyDefaults(){
     g_aimbotKey = VK_LBUTTON;
     g_aimbotFov = 5.f;
     g_aimbotSmooth = 6.f;
+    g_aimbotBone = 0;
     g_fovCircleEnabled = false;
     g_fovCircleCol[0]=0.4f; g_fovCircleCol[1]=0.7f; g_fovCircleCol[2]=1.f; g_fovCircleCol[3]=0.5f;
     g_aimbotTeamChk = true;
-    g_aimbotVisCheck = true;
+    g_aimbotVisCheck = false;
     g_rcsEnabled = false;
     g_rcsX = 1.0f;
     g_rcsY = 1.0f;
@@ -622,6 +624,7 @@ static bool SaveConfig(const char* name){
     WriteInt(out, "aimbot_key", g_aimbotKey);
     WriteFloat(out, "aimbot_fov", g_aimbotFov);
     WriteFloat(out, "aimbot_smooth", g_aimbotSmooth);
+    WriteInt(out, "aimbot_bone", g_aimbotBone);
     WriteBool(out, "aimbot_team", g_aimbotTeamChk);
     WriteBool(out, "aimbot_vis", g_aimbotVisCheck);
 
@@ -740,6 +743,7 @@ static bool LoadConfig(const char* name){
     g_particlesDepthFade = Clampf(g_particlesDepthFade, 0.0005f, 0.01f);
     g_waitAimFovDeg = Clampf(g_waitAimFovDeg, 0.4f, 15.f);
     g_rcsSmooth = Clampf(g_rcsSmooth, 1.f, 30.f);
+    if(g_aimbotBone < 0 || g_aimbotBone > 4) g_aimbotBone = 0;
     g_damageFloaterDuration = Clampf(g_damageFloaterDuration, 0.25f, 2.5f);
     g_damageFloaterScale = Clampf(g_damageFloaterScale, 0.4f, 2.5f);
     g_damageFloaterAnchor &= 1;

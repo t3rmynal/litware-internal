@@ -1029,15 +1029,17 @@ static void DrawMenu(){
         BeginPidoGroup("##g_aim", "Aimbot", {childW, contentH});
         PidoToggle("Enable","", &g_aimbotEnabled);
         if(g_aimbotEnabled){
+            const char* aimBoneItems[] = {"Head","Neck","Chest","Stomach","Pelvis"};
             PidoSliderFloat("FOV","", &g_aimbotFov, 1.f, 90.f, "%.1f");
             PidoSliderFloat("Smooth","", &g_aimbotSmooth, 1.f, 30.f, "%.1f");
+            PidoCombo("Bone","", &g_aimbotBone, aimBoneItems, IM_ARRAYSIZE(aimBoneItems));
             PidoKeybind("Aimbot key","", &g_aimbotKey);
             PidoToggle("FOV circle","", &g_fovCircleEnabled);
             if(g_fovCircleEnabled) PidoColorEdit4("FOV color","", g_fovCircleCol);
             PidoToggle("Autostop","", &g_autostopEnabled);
             PidoToggle("Wait aim then fire","", &g_waitAimThenFire);
             if(g_waitAimThenFire) PidoSliderFloat("Aim lock (deg)","", &g_waitAimFovDeg, 0.5f, 8.f, "%.2f");
-            PidoToggle("Crosshair target only","", &g_aimbotVisCheck);
+            PidoToggle("Visible only","", &g_aimbotVisCheck);
         }
         EndPidoGroup();
 

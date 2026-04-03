@@ -150,10 +150,11 @@ static bool g_aimbotEnabled = false;
 static int g_aimbotKey = VK_LBUTTON;
 static float g_aimbotFov = 9.f;
 static float g_aimbotSmooth = 15.1f;
+static int g_aimbotBone = 0;
 static bool g_fovCircleEnabled = false;
 static float g_fovCircleCol[4]{0.4f,0.7f,1.f,0.5f};
 static bool g_aimbotTeamChk = true;
-static bool g_aimbotVisCheck = true;  // цель только под прицелом
+static bool g_aimbotVisCheck = false;
 static int g_aimbotWeaponFilter = 0;  // 0 все 1 винтовки 2 снайперки 3 пистолеты
 static bool g_rcsEnabled = false;
 static float g_rcsX = 1.0f;
@@ -638,6 +639,41 @@ static void UpdatePawnBones(uintptr_t pawn){
     if(!skel) return;
     __try{ g_calcWorldSpaceBones(reinterpret_cast<void*>(skel), 0xFFFFF); }
     __except(EXCEPTION_EXECUTE_HANDLER){}
+}
+
+static bool IsFiniteVec3(const Vec3& v){
+    return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
+}
+
+static bool ResolveAimbotPoint(uintptr_t pawn, const Vec3& fallback, Vec3& out){
+    static const int kHeadBones[]   = { BONE_HEAD,   BONE_NECK,  BONE_SPINE3, BONE_SPINE2, BONE_PELVIS };
+    static const int kNeckBones[]   = { BONE_NECK,   BONE_HEAD,  BONE_SPINE3, BONE_SPINE2, BONE_PELVIS };
+    static const int kChestBones[]  = { BONE_SPINE3, BONE_SPINE2, BONE_NECK,  BONE_HEAD,   BONE_PELVIS };
+    static const int kStomachBones[]= { BONE_SPINE2, BONE_SPINE3, BONE_PELVIS, BONE_NECK,  BONE_HEAD };
+    static const int kPelvisBones[] = { BONE_PELVIS, BONE_SPINE2, BONE_SPINE3, BONE_NECK,  BONE_HEAD };
+
+    const int* bones = kHeadBones;
+    int boneCount = (int)IM_ARRAYSIZE(kHeadBones);
+
+    switch(g_aimbotBone){
+        case 1: bones = kNeckBones; break;
+        case 2: bones = kChestBones; break;
+        case 3: bones = kStomachBones; break;
+        case 4: bones = kPelvisBones; break;
+        default: break;
+    }
+
+    UpdatePawnBones(pawn);
+    for(int i = 0; i < boneCount; ++i){
+        Vec3 bonePos{};
+        if(GetBonePos(pawn, bones[i], bonePos) && IsFiniteVec3(bonePos)){
+            out = bonePos;
+            return true;
+        }
+    }
+
+    out = fallback;
+    return IsFiniteVec3(out);
 }
 
 static bool LooksLikeUtf16LE(uintptr_t addr){
