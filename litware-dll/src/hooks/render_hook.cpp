@@ -91,6 +91,7 @@ static bool g_espDrawBox = true;
 static bool g_espOnlyVis = false;
 static int g_espBoxStyle = 4;
 static float g_espBoxThick = 1.5f;
+static bool g_espBoxShadow = false;
 static float g_espEnemyCol[4]{0.209677f,0.502861f,1.f,1.f};
 static float g_espTeamCol[4]{1.f,0.25f,0.921371f,1.f};
 static bool g_espShowTeam = false;

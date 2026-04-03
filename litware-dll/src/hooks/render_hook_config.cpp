@@ -266,6 +266,7 @@ static bool LoadConfigKeyEsp(const std::string& key, const std::string& val, boo
     if(key=="esp_only_vis"){ g_espOnlyVis=ParseBool(val); return true; }
     if(key=="esp_box_style"){ int v; if(ParseInt(val,v)) g_espBoxStyle=v; else ok=false; return true; }
     if(key=="esp_box_thick"){ float v; if(ParseFloat(val,v)) g_espBoxThick=v; else ok=false; return true; }
+    if(key=="esp_box_shadow"){ g_espBoxShadow=ParseBool(val); return true; }
     if(key=="esp_enemy_col"){ if(!ParseColor4(val,g_espEnemyCol)) ok=false; return true; }
     if(key=="esp_team_col"){ if(!ParseColor4(val,g_espTeamCol)) ok=false; return true; }
     if(key=="esp_team"){ g_espShowTeam=ParseBool(val); return true; }
@@ -429,6 +430,7 @@ static void ApplyDefaults(){
     g_espOnlyVis = false;
     g_espBoxStyle = 0;
     g_espBoxThick = 1.5f;
+    g_espBoxShadow = false;
     g_espEnemyCol[0]=1.f; g_espEnemyCol[1]=0.25f; g_espEnemyCol[2]=0.25f; g_espEnemyCol[3]=1.f;
     g_espTeamCol[0]=0.25f; g_espTeamCol[1]=0.55f; g_espTeamCol[2]=1.f; g_espTeamCol[3]=1.f;
     g_espShowTeam = true;
@@ -572,6 +574,7 @@ static bool SaveConfig(const char* name){
     WriteBool(out, "esp_only_vis", g_espOnlyVis);
     WriteInt(out, "esp_box_style", g_espBoxStyle);
     WriteFloat(out, "esp_box_thick", g_espBoxThick);
+    WriteBool(out, "esp_box_shadow", g_espBoxShadow);
     WriteColor(out, "esp_enemy_col", g_espEnemyCol);
     WriteColor(out, "esp_team_col", g_espTeamCol);
     WriteBool(out, "esp_team", g_espShowTeam);

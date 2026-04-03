@@ -514,8 +514,10 @@ static void DrawESP(){
         float belowY = bb + 3.f * s;
         const float boxRnd = 3.5f * s;
         if(g_espDrawBox){
-            dl->AddRectFilled({bl+4.f,bt2+4.f},{br+4.f,bb+4.f},IM_COL32(0,0,0,(int)(34*alpha)),boxRnd+1.5f);
-            dl->AddRectFilled({bl+2.f,bt2+2.f},{br+2.f,bb+2.f},IM_COL32(0,0,0,(int)(48*alpha)),boxRnd+0.5f);
+            if(g_espBoxShadow){
+                dl->AddRectFilled({bl+4.f,bt2+4.f},{br+4.f,bb+4.f},IM_COL32(0,0,0,(int)(34*alpha)),boxRnd+1.5f);
+                dl->AddRectFilled({bl+2.f,bt2+2.f},{br+2.f,bb+2.f},IM_COL32(0,0,0,(int)(48*alpha)),boxRnd+0.5f);
+            }
             for(int g=3;g>=1;g--){
                 int r=(boxCol>>IM_COL32_R_SHIFT)&0xFF,g_=(boxCol>>IM_COL32_G_SHIFT)&0xFF,b=(boxCol>>IM_COL32_B_SHIFT)&0xFF;
                 int ga=(g==3)?30:(g==2)?16:7;

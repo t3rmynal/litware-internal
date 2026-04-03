@@ -807,6 +807,10 @@ static void DrawFakeESPPreview(const ImVec2& size, int pos){
     const float prvRnd = 3.5f;
     auto drawBox=[&](ImVec2 center,ImU32 col){
         float l=center.x-boxW*0.5f,r=center.x+boxW*0.5f,t=center.y-boxH*0.5f,b=center.y+boxH*0.5f;
+        if(g_espBoxShadow){
+            dl->AddRectFilled({l+4.f,t+4.f},{r+4.f,b+4.f},IM_COL32(0,0,0,34),prvRnd+1.5f);
+            dl->AddRectFilled({l+2.f,t+2.f},{r+2.f,b+2.f},IM_COL32(0,0,0,48),prvRnd+0.5f);
+        }
         if(g_espBoxStyle==2){
             dl->AddRectFilled({l,t},{r,b},IM_COL32(20,20,28,140),prvRnd);
             DrawCornerBox(dl,l,t,r,b,IM_COL32(0,0,0,200),g_espBoxThick+1.f);
@@ -1070,6 +1074,7 @@ static void DrawMenu(){
             const char* boxItems[]={"Corner","Full","Corner Fill","Outline","Coal","Outline Coal"};
             PidoCombo("Style","", &g_espBoxStyle, boxItems, IM_ARRAYSIZE(boxItems));
             PidoSliderFloat("Thickness","", &g_espBoxThick, 0.5f, 4.f, "%.1f");
+            PidoToggle("Shadow","", &g_espBoxShadow);
             PidoColorEdit4("Enemy color","", g_espEnemyCol);
             PidoColorEdit4("Team color","", g_espTeamCol);
         }
