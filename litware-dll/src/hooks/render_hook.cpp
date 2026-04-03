@@ -3526,6 +3526,12 @@ static void DrawMenu(){
         g_grpGeneration++;
         g_activeTab = page;
     }
+
+    static bool s_configTabWasVisible = false;
+    const bool configTabVisible = g_activeTab == 3;
+    if(configTabVisible && !s_configTabWasVisible) RefreshConfigList();
+    s_configTabWasVisible = configTabVisible;
+
     const float tabAlphaEased = 1.f;
 
     float contentX = pad;
@@ -3685,9 +3691,6 @@ static void DrawMenu(){
         }
         EndPidoGroup();
     }else if(g_activeTab==3){
-        static int s_lastConfigTabFrame = -1;
-        if(s_lastConfigTabFrame != ImGui::GetFrameCount()){ s_lastConfigTabFrame = ImGui::GetFrameCount(); RefreshConfigList(); }
-
         float movH   = grpH(2);
         float radH   = grpH(1);
         float hudH   = contentH - movH - radH - gap * 2.f;
