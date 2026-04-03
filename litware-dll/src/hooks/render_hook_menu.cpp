@@ -1167,7 +1167,8 @@ static void DrawMenu(){
         }
         EndPidoGroup();
     }else if(g_activeTab==3){
-        float movH   = grpH(2);
+        int movRows = 3 + (g_strafeEnabled ? 1 : 0) + (g_dtEnabled ? 1 : 0);
+        float movH   = grpH(movRows);
         float radH   = grpH(1);
         float hudH   = contentH - movH - radH - gap * 2.f;
         if (hudH < 40.f * s) hudH = 40.f * s;
@@ -1176,6 +1177,9 @@ static void DrawMenu(){
         BeginPidoGroup("##g_move", "Movement", {childW, movH});
         PidoToggle("Bunny hop","", &g_bhopEnabled);
         PidoToggle("Auto strafe","", &g_strafeEnabled);
+        if(g_strafeEnabled) PidoKeybind("Strafe key","", &g_strafeKey);
+        PidoToggle("Double tap","", &g_dtEnabled);
+        if(g_dtEnabled) PidoKeybind("DT key","", &g_dtKey);
         EndPidoGroup();
 
         ImGui::SetCursorPos({contentX, contentY + movH + gap});
@@ -1238,35 +1242,83 @@ static void DrawMenu(){
 }
 
 static void DrawKeybindsWindow(){
-    if(!g_keybindsEnabled || !g_keybindsWindowOpen) return;
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(16/255.f,16/255.f,16/255.f,245/255.f));
-    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(64/255.f,64/255.f,64/255.f,220/255.f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.f);
-    ImGui::SetNextWindowSize({320.f,300.f},ImGuiCond_Always);
-    ImGui::Begin("Keybinds",nullptr,ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoCollapse);
-    ImDrawList* wdl = ImGui::GetWindowDrawList();
-    ImVec2 wp = ImGui::GetWindowPos();
-    ImVec2 ws = ImGui::GetWindowSize();
-    wdl->AddRect({wp.x+1.f,wp.y+1.f},{wp.x+ws.x-1.f,wp.y+ws.y-1.f}, IM_COL32(8,8,8,210), 6.f, 0, 1.f);
-    ImVec2 cr0 = ImGui::GetWindowContentRegionMin();
-    float cw = ImGui::GetWindowContentRegionMax().x - cr0.x;
-    float yTop = wp.y + cr0.y + 2.f;
-    float gx0 = wp.x + cr0.x + 2.f;
-    float gq1 = gx0 + cw * 0.33f;
-    float gq2 = gx0 + cw * 0.66f;
-    float gx1 = wp.x + cr0.x + cw - 2.f;
-    wdl->AddRectFilledMultiColor({gx0,yTop},{gq1,yTop+3.f},
-        IM_COL32(108,132,188,220), IM_COL32(174,122,190,220), IM_COL32(174,122,190,220), IM_COL32(108,132,188,220));
-    wdl->AddRectFilledMultiColor({gq1,yTop},{gq2,yTop+3.f},
-        IM_COL32(174,122,190,220), IM_COL32(194,166,118,220), IM_COL32(194,166,118,220), IM_COL32(174,122,190,220));
-    wdl->AddRectFilledMultiColor({gq2,yTop},{gx1,yTop+3.f},
-        IM_COL32(194,166,118,220), IM_COL32(116,168,148,220), IM_COL32(116,168,148,220), IM_COL32(194,166,118,220));
-    KeyBindWidget("Aimbot key",&g_aimbotKey);
-    KeyBindWidget("Triggerbot key",&g_tbKey);
-    KeyBindWidget("DT key",&g_dtKey);
-    KeyBindWidget("Strafe key",&g_strafeKey);
-    ImGui::End();
-    ImGui::PopStyleVar(2);
-    ImGui::PopStyleColor(2);
+    if(!g_keybindsEnabled) return;
+
+    struct KeybindRow{
+        const char* label;
+        int key;
+        bool active;
+        bool always;
+    };
+
+    KeybindRow rows[4]{};
+    int rowCount = 0;
+    auto addRow = [&](bool enabled, const char* label, int key, bool active, bool always){
+        if(!enabled) return;
+        if(!g_menuOpen && !active) return;
+        rows[rowCount++] = {label, key, active, always};
+    };
+
+    bool aimActive = g_aimbotEnabled && g_aimbotKey != 0 && (GetAsyncKeyState(g_aimbotKey)&0x8000);
+    bool tbActive = g_tbEnabled && (g_tbKey == 0 || (GetAsyncKeyState(g_tbKey)&0x8000));
+    bool dtActive = g_dtEnabled && g_dtKey != 0 && (GetAsyncKeyState(g_dtKey)&0x8000);
+    bool strafeActive = g_strafeEnabled && (g_strafeKey == 0 || (GetAsyncKeyState(g_strafeKey)&0x8000));
+
+    addRow(g_aimbotEnabled && g_aimbotKey != 0, "Aimbot", g_aimbotKey, aimActive, false);
+    addRow(g_tbEnabled, "Triggerbot", g_tbKey, tbActive, g_tbKey == 0);
+    addRow(g_dtEnabled && g_dtKey != 0, "Double tap", g_dtKey, dtActive, false);
+    addRow(g_strafeEnabled, "Auto strafe", g_strafeKey, strafeActive, g_strafeKey == 0);
+
+    if(rowCount <= 0) return;
+
+    ImDrawList* dl = ImGui::GetForegroundDrawList();
+    if(!dl) return;
+
+    ImFont* fBold = font::bold ? font::bold : ImGui::GetFont();
+    ImFont* fReg = font::regular ? font::regular : ImGui::GetFont();
+    const char* title = "KEYBINDS";
+    ImVec2 szTitle = fBold->CalcTextSizeA(fBold->LegacySize, FLT_MAX, 0.f, title);
+    float maxLeft = szTitle.x;
+    float maxRight = 46.f;
+    for(int i = 0; i < rowCount; i++){
+        const char* state = rows[i].always ? "always" : KeyName(rows[i].key);
+        ImVec2 szLeft = fReg->CalcTextSizeA(fReg->LegacySize, FLT_MAX, 0.f, rows[i].label);
+        ImVec2 szRight = fReg->CalcTextSizeA(fReg->LegacySize, FLT_MAX, 0.f, state);
+        if(szLeft.x > maxLeft) maxLeft = szLeft.x;
+        if(szRight.x > maxRight) maxRight = szRight.x;
+    }
+
+    const float margin = 15.f;
+    const float padX = 12.f;
+    const float padY = 10.f;
+    const float rnd = 8.f;
+    const float lineH = 22.f;
+    const float headerH = 30.f;
+    float boxW = maxLeft + maxRight + padX * 2.f + 24.f;
+    float boxH = headerH + 1.f + (float)rowCount * lineH + padY;
+    float x = margin;
+    float y = margin;
+
+    dl->AddRectFilled({x-3.f, y-3.f}, {x+boxW+3.f, y+boxH+3.f}, IM_COL32(0,0,0,55), rnd+2.f);
+    DrawOverlayWatermarkChrome(dl, {x, y}, {x+boxW, y+boxH}, rnd);
+    dl->AddRectFilled({x+1.f, y+1.f}, {x+boxW-1.f, y+headerH}, IM_COL32(10,10,14,140), rnd, ImDrawFlags_RoundCornersTop);
+    dl->AddLine({x+2.f, y+headerH}, {x+boxW-2.f, y+headerH}, IM_COL32(32,34,42,255), 1.f);
+    dl->AddRectFilled({x, y+4.f}, {x+2.f, y+boxH-4.f}, IM_COL32((int)(g_accentColor[0]*255),(int)(g_accentColor[1]*255),(int)(g_accentColor[2]*255),255), 2.f);
+    dl->AddText(fBold, fBold->LegacySize, {x+padX, y + headerH*0.5f - szTitle.y*0.5f}, IM_COL32(220,220,220,255), title);
+
+    for(int i = 0; i < rowCount; i++){
+        float rowY = y + headerH + 1.f + (float)i * lineH;
+        float rowMid = rowY + lineH * 0.5f;
+        if((i % 2) == 0){
+            dl->AddRectFilled({x+1.f, rowY}, {x+boxW-1.f, rowY+lineH}, IM_COL32(255,255,255,8));
+        }
+
+        const char* state = rows[i].always ? "always" : KeyName(rows[i].key);
+        ImU32 leftCol = IM_COL32(215,220,230,255);
+        ImU32 rightCol = rows[i].active ? IM_COL32(140,220,160,255) : IM_COL32(120,125,138,255);
+        ImVec2 szLeft = fReg->CalcTextSizeA(fReg->LegacySize, FLT_MAX, 0.f, rows[i].label);
+        ImVec2 szRight = fReg->CalcTextSizeA(fReg->LegacySize, FLT_MAX, 0.f, state);
+        dl->AddText(fReg, fReg->LegacySize, {x+padX, rowMid - szLeft.y*0.5f}, leftCol, rows[i].label);
+        dl->AddText(fReg, fReg->LegacySize, {x+boxW-padX-szRight.x, rowMid - szRight.y*0.5f}, rightCol, state);
+    }
 }
