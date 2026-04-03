@@ -119,12 +119,26 @@ static void BuildESPData(){
     }
 }
 
-static char g_spectatorNames[10][64];
+static void ReadPlayerName(uintptr_t controller, char* buf, size_t maxlen){
+    if(!buf || !maxlen){ return; }
+    buf[0] = '\0';
+    if(!controller) return;
+
+    uintptr_t nameAddr = controller + offsets::controller::m_sSanitizedPlayerName;
+    RdName(nameAddr, buf, maxlen);
+    if(buf[0]) return;
+
+    uintptr_t namePtr = Rd<uintptr_t>(nameAddr);
+    if(namePtr) RdName(namePtr, buf, maxlen);
+}
+
+static char g_spectatorNames[16][64];
 static int g_spectatorCount = 0;
 static char g_spectatingTarget[64] = {};
 static bool g_weAreSpectating = false;
 
 static void BuildSpectatorList(){
+    constexpr int kMaxSpectators = (int)(sizeof(g_spectatorNames) / sizeof(g_spectatorNames[0]));
     g_spectatorCount = 0;
     g_spectatingTarget[0] = '\0';
     g_weAreSpectating = false;
@@ -142,7 +156,9 @@ static void BuildSpectatorList(){
             if(!chunk) continue;
             uintptr_t ctrl = Rd<uintptr_t>(chunk + 112*(i&0x1FF));
             if(!ctrl||ctrl==localCtrl) continue;
+            if(Rd<bool>(ctrl + offsets::controller::m_bPawnIsAlive)) continue;
             uint32_t obsHandle = Rd<uint32_t>(ctrl + offsets::controller::m_hObserverPawn);
+            if(!obsHandle) obsHandle = Rd<uint32_t>(ctrl + offsets::controller::m_hPlayerPawn);
             if(!obsHandle) continue;
             uintptr_t obsPawn = ResolveHandle(entityList, obsHandle);
             if(!obsPawn) continue;
@@ -152,8 +168,8 @@ static void BuildSpectatorList(){
             if(!targetHandle) continue;
             uintptr_t targetPawn = ResolveHandle(entityList, targetHandle);
             if(targetPawn != localPawn) continue;
-            uintptr_t namePtr = Rd<uintptr_t>(ctrl + offsets::controller::m_sSanitizedPlayerName);
-            if(g_spectatorCount < 10) RdName(namePtr, g_spectatorNames[g_spectatorCount], 64);
+            if(g_spectatorCount >= kMaxSpectators) continue;
+            ReadPlayerName(ctrl, g_spectatorNames[g_spectatorCount], sizeof(g_spectatorNames[g_spectatorCount]));
             g_spectatorCount++;
         }
     }else{
@@ -175,8 +191,7 @@ static void BuildSpectatorList(){
                         if(!pchunk) continue;
                         uintptr_t pawn = Rd<uintptr_t>(pchunk + 112*(ph&0x1FF));
                         if(pawn == targetPawn){
-                            uintptr_t namePtr = Rd<uintptr_t>(ctrl + offsets::controller::m_sSanitizedPlayerName);
-                            RdName(namePtr, g_spectatingTarget, sizeof(g_spectatingTarget));
+                            ReadPlayerName(ctrl, g_spectatingTarget, sizeof(g_spectatingTarget));
                             break;
                         }
                     }
@@ -1109,4 +1124,3 @@ static void DrawBombTimer(float sw){
     tx += wSite.x;
     dl->AddText(reg, fs, {tx, ty}, dim, tail);
 }
-
