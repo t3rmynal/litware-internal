@@ -81,7 +81,7 @@ Offsets are stored in `litware-dll/src/core/offsets.h` and synced from `cs2-dump
 After game updates:
 
 1. Refresh `offsets/output/`
-2. Update `litware-dll/src/core/offsets.h`
+2. Run `python3 offsets/update_offsets.py`
 3. Rebuild the DLL
 
 ---

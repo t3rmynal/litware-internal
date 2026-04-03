@@ -55,7 +55,7 @@ Configs are stored in `%APPDATA%\litware\` as plain-text `*.cfg` files.
 
 ## Offsets
 
-Offsets are kept in `litware-dll/src/core/offsets.h` and refreshed from `cs2-dumper` after game updates.
+Offsets are kept in `litware-dll/src/core/offsets.h` and can be refreshed from `cs2-dumper` with `python3 offsets/update_offsets.py`.
 
 ---
 

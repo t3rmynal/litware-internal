@@ -8,5 +8,14 @@
 ## После обновления CS2
 
 1. Запусти cs2-dumper и скопируй вывод в `offsets/output/`.
-2. Сверь и обнови значения в `litware-dll/src/core/offsets.h`.
-3. Если что-то всё ещё ломается — обнови сигнатуры/паттерны в `litware-dll` (хуки в `render_hook.cpp` и др.), опираясь на новый дамп или сообщество.
+2. Обнови managed-блоки в `litware-dll/src/core/offsets.h` через `python3 offsets/update_offsets.py`.
+3. Проверь diff и, если нужно, добей руками оставшиеся netvar/member offsets.
+4. Если что-то всё ещё ломается — обнови сигнатуры/паттерны в `litware-dll` (хуки в `render_hook.cpp` и др.), опираясь на новый дамп или сообщество.
+
+## Быстрый запуск
+
+```sh
+python3 offsets/update_offsets.py
+```
+
+Скрипт читает всё из `offsets/output/`, обновляет только поддерживаемые namespace-блоки в `litware-dll/src/core/offsets.h` и оставляет остальные member offsets как есть.
