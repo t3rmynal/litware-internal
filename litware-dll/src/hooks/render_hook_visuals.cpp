@@ -5,6 +5,17 @@ static constexpr int MAX_PARTICLES = 1500;
 static void UpdateAndDrawParticles(float dt,float sw,float sh){
     ImDrawList*dl=ImGui::GetBackgroundDrawList();if(!dl)return;
     const float* vm = g_client ? reinterpret_cast<const float*>(g_client+offsets::client::dwViewMatrix) : nullptr;
+    bool worldReady = HasUsableLocalWorld();
+    if(!worldReady){
+        g_pendingKillParticles = false;
+        g_particles.erase(std::remove_if(g_particles.begin(), g_particles.end(), [](const Particle& p){
+            return p.is3D;
+        }), g_particles.end());
+    }else if(!g_particlesWorld){
+        g_particles.erase(std::remove_if(g_particles.begin(), g_particles.end(), [](const Particle& p){
+            return p.is3D && p.type <= 3;
+        }), g_particles.end());
+    }
     if(g_pendingKillParticles && vm && g_killEffectEnabled){
         ImU32 accentCol=IM_COL32((int)(g_accentColor[0]*255),(int)(g_accentColor[1]*255),(int)(g_accentColor[2]*255),230);
         for(int i=0;i<67 && (int)g_particles.size()<MAX_PARTICLES;i++){
@@ -24,7 +35,7 @@ static void UpdateAndDrawParticles(float dt,float sw,float sh){
     if(g_snowEnabled){snowAcc+=dt*(float)snowRate;}
     if(g_sakuraEnabled){sakuraAcc+=dt*40.f;}
     if(g_starsEnabled){starAcc+=dt*12.f;}
-    bool use3D = (vm != nullptr) && g_particlesWorld && (g_esp_count > 0 || (g_localOrigin.x*g_localOrigin.x + g_localOrigin.y*g_localOrigin.y + g_localOrigin.z*g_localOrigin.z) > 100.f);
+    bool use3D = worldReady && (vm != nullptr) && g_particlesWorld && (g_esp_count > 0 || (g_localOrigin.x*g_localOrigin.x + g_localOrigin.y*g_localOrigin.y + g_localOrigin.z*g_localOrigin.z) > 100.f);
     float worldRadius = g_particlesWorldRadius;
     float worldHeight = g_particlesWorldHeight;
     float worldFloor = g_particlesWorldFloor;

@@ -449,6 +449,25 @@ static void EnsureClientHooks();
 static void* PatternScan(HMODULE mod,const char*pat,const char*mask);
 static void EnsureCalcWorldSpaceBones();
 static void UpdatePawnBones(uintptr_t pawn);
+static void EnsureModules();
+static inline bool IsLikelyPtr(uintptr_t p);
+
+static bool HasUsableLocalWorld(){
+    EnsureModules();
+    if(!g_client) return false;
+    uintptr_t lp = Rd<uintptr_t>(g_client + offsets::client::dwLocalPlayerPawn);
+    if(!lp || !IsLikelyPtr(lp)) return false;
+    uintptr_t scn = Rd<uintptr_t>(lp + offsets::base_entity::m_pGameSceneNode);
+    if(!scn || !IsLikelyPtr(scn)) return false;
+    if(g_engine2){
+        uintptr_t netClient = Rd<uintptr_t>(g_engine2 + offsets::engine2::dwNetworkGameClient);
+        if(netClient){
+            int signOnState = Rd<int>(netClient + offsets::engine2::dwNetworkGameClient_signOnState);
+            if(signOnState > 0 && signOnState < 6) return false;
+        }
+    }
+    return true;
+}
 
 struct MaterialColor {
     uint8_t r,g,b,a;
@@ -1170,8 +1189,13 @@ static void* __fastcall HookFirstPersonLegs(void* a1, void* a2, void* a3, void* 
 }
 
 static void EnsureSceneHooks(){
+    bool needScene = (g_chamsEnabled && g_chamsScene) || g_worldColorEnabled || g_handsColorEnabled || g_weaponChamsEnabled;
     bool needSky = g_skyColorEnabled;
-    if(g_drawSceneHooked && (!needSky || g_drawSkyHooked)){
+    if(!needScene && !needSky){
+        g_sceneHooksReady = true;
+        return;
+    }
+    if((!needScene || g_drawSceneHooked) && (!needSky || g_drawSkyHooked)){
         g_sceneHooksReady = true;
         return;
     }
@@ -1189,13 +1213,13 @@ static void EnsureSceneHooks(){
     static const char PAT_SKY[] = "\x45\x85\xC9\x0F\x8E\x00\x00\x00\x00\x4C\x8B\xDC\x55";
     static const char MSK_SKY[] = "xxxxx????xxxx";
     void* drawScene = nullptr;
-    if(!g_drawSceneHooked){
+    if(needScene && !g_drawSceneHooked){
         drawScene = PatternScan(scene, PAT_DRAW_SCENE, MSK_DRAW_SCENE);
         if(!drawScene) drawScene = PatternScan(scene, PAT_DRAW_SCENE2, MSK_DRAW_SCENE2);
         if(!drawScene) drawScene = PatternScan(scene, PAT_DRAW_SCENE3, MSK_DRAW_SCENE3);
     }
     void* drawSky = (!g_drawSkyHooked && needSky) ? PatternScan(scene, PAT_SKY, MSK_SKY) : nullptr;
-    if(!g_drawSceneHooked){
+    if(needScene && !g_drawSceneHooked){
         if(drawScene && minhook_utils::CreateHook(drawScene, &HookDrawSceneObject, &g_origDrawSceneObject)==MH_OK){
             minhook_utils::EnableHook(drawScene);
             g_drawSceneHooked = true;
@@ -1217,7 +1241,7 @@ static void EnsureSceneHooks(){
             DebugLog("[LitWare] draw_skybox_array hook failed");
         }
     }
-    g_sceneHooksReady = g_drawSceneHooked && (!needSky || g_drawSkyHooked);
+    g_sceneHooksReady = (!needScene || g_drawSceneHooked) && (!needSky || g_drawSkyHooked);
 }
 
 static void EnsureClientHooks(){
