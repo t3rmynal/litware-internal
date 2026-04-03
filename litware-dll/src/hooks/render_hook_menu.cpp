@@ -1156,8 +1156,6 @@ static void DrawMenu(){
         BeginPidoGroup("##g_world", "World", {childW, contentH});
         PidoToggle("Sky color","", &g_skyColorEnabled);
         if(g_skyColorEnabled) PidoColorEdit4("Sky##col","", g_skyColor);
-        PidoToggle("World color","Tint map/props (scene draw)", &g_worldColorEnabled);
-        if(g_worldColorEnabled) PidoColorEdit4("World tint (multiply)","", g_worldColor);
         EndPidoGroup();
 
         ImGui::SetCursorPos({rightX, contentY});

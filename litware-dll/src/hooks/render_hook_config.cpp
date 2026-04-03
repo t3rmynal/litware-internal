@@ -372,8 +372,8 @@ static bool LoadConfigKeyVisual(const std::string& key, const std::string& val, 
     if(key=="particles_depth_fade"){ float v; if(ParseFloat(val,v)) g_particlesDepthFade=v; else ok=false; return true; }
     if(key=="sky_color_enabled"){ g_skyColorEnabled=ParseBool(val); return true; }
     if(key=="sky_color"){ if(!ParseColor4(val,g_skyColor)) ok=false; return true; }
-    if(key=="world_color_enabled"){ g_worldColorEnabled=ParseBool(val); return true; }
-    if(key=="world_color"){ if(!ParseColor4(val,g_worldColor)) ok=false; return true; }
+    if(key=="world_color_enabled") return true;
+    if(key=="world_color") return true;
     if(key=="damage_floaters"){ g_damageFloatersEnabled=ParseBool(val); return true; }
     if(key=="damage_floater_duration"){ float v; if(ParseFloat(val,v)) g_damageFloaterDuration=v; else ok=false; return true; }
     if(key=="damage_floater_scale"){ float v; if(ParseFloat(val,v)) g_damageFloaterScale=v; else ok=false; return true; }
@@ -518,8 +518,6 @@ static void ApplyDefaults(){
     g_particlesDepthFade = 0.0022f;
     g_skyColorEnabled = false;
     g_skyColor[0]=0.4f; g_skyColor[1]=0.5f; g_skyColor[2]=0.8f; g_skyColor[3]=1.f;
-    g_worldColorEnabled = false;
-    g_worldColor[0]=0.92f; g_worldColor[1]=0.94f; g_worldColor[2]=1.f; g_worldColor[3]=1.f;
     g_damageFloatersEnabled = true;
     g_damageFloaterDuration = 0.85f;
     g_damageFloaterScale = 1.f;
@@ -669,8 +667,6 @@ static bool SaveConfig(const char* name){
     WriteFloat(out, "particles_depth_fade", g_particlesDepthFade);
     WriteBool(out, "sky_color_enabled", g_skyColorEnabled);
     WriteColor(out, "sky_color", g_skyColor);
-    WriteBool(out, "world_color_enabled", g_worldColorEnabled);
-    WriteColor(out, "world_color", g_worldColor);
     WriteBool(out, "damage_floaters", g_damageFloatersEnabled);
     WriteFloat(out, "damage_floater_duration", g_damageFloaterDuration);
     WriteFloat(out, "damage_floater_scale", g_damageFloaterScale);

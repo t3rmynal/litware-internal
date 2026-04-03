@@ -200,8 +200,6 @@ static bool g_handsColorEnabled = false;
 static float g_handsColor[4]{0.9f,0.9f,0.95f,1.f};
 static bool g_skyColorEnabled = false;
 static float g_skyColor[4]{0.225259f,0.192963f,0.693548f,1.f};
-static bool g_worldColorEnabled = false;
-static float g_worldColor[4]{0.92f, 0.94f, 1.f, 1.f};
 static bool g_watermarkEnabled = true;
 static bool g_showFpsWatermark = true;
 static float g_watermarkOverlayHeight = 0.f;
@@ -1058,8 +1056,7 @@ static void* ResolveRelative(void* instr, int offset, int size){
 
 static void __fastcall HookDrawSceneObject(void* a1, void* a2, void* a3, int a4, int a5, void* a6, void* a7, void* a8){
     const bool doSceneChams = g_chamsEnabled && g_chamsScene;
-    const bool doWorldColor = g_worldColorEnabled;
-    if((doSceneChams || doWorldColor || g_handsColorEnabled || g_weaponChamsEnabled) && a3 && a4 > 0 && a4 < 20000){
+    if((doSceneChams || g_handsColorEnabled || g_weaponChamsEnabled) && a3 && a4 > 0 && a4 < 20000){
         __try{
             uint8_t* base = (uint8_t*)a3;
             int localTeam = g_esp_local_team;
@@ -1130,24 +1127,6 @@ static void __fastcall HookDrawSceneObject(void* a1, void* a2, void* a3, int a4,
                                 applied = true;
                             }
                         }
-
-                        if(!applied && doWorldColor && matName){
-                            bool ex = StrContainsI(matName,"player") || StrContainsI(matName,"character")
-                                || StrContainsI(matName,"viewmodel") || StrContainsI(matName,"vm_") || StrContainsI(matName,"arms");
-                            bool inc = StrContainsI(matName,"lightmapped") || StrContainsI(matName,"worldvertex")
-                                || StrContainsI(matName,"decal") || StrContainsI(matName,"concrete") || StrContainsI(matName,"metal")
-                                || StrContainsI(matName,"brick") || StrContainsI(matName,"plaster") || StrContainsI(matName,"models/props")
-                                || StrContainsI(matName,"prop_") || StrContainsI(matName,"tools/") || StrContainsI(matName,"sky")
-                                || StrContainsI(matName,"blend");
-                            if(inc && !ex){
-                                MaterialColor out{};
-                                out.r = (uint8_t)Clampf((float)c->r * g_worldColor[0], 0.f, 255.f);
-                                out.g = (uint8_t)Clampf((float)c->g * g_worldColor[1], 0.f, 255.f);
-                                out.b = (uint8_t)Clampf((float)c->b * g_worldColor[2], 0.f, 255.f);
-                                out.a = c->a;
-                                *c = out;
-                            }
-                        }
                         break;
                     }
                 }__except(EXCEPTION_EXECUTE_HANDLER){}
@@ -1190,7 +1169,7 @@ static void* __fastcall HookFirstPersonLegs(void* a1, void* a2, void* a3, void* 
 }
 
 static void EnsureSceneHooks(){
-    bool needScene = (g_chamsEnabled && g_chamsScene) || g_worldColorEnabled || g_handsColorEnabled || g_weaponChamsEnabled;
+    bool needScene = (g_chamsEnabled && g_chamsScene) || g_handsColorEnabled || g_weaponChamsEnabled;
     bool needSky = g_skyColorEnabled;
     if(!needScene && !needSky){
         g_sceneHooksReady = true;
