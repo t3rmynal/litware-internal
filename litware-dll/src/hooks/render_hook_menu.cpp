@@ -950,7 +950,7 @@ static void DrawMenu(){
         dl->AddText(fBold, tSize, {pos.x + (size.x - szT.x)*0.5f, midH - szT.y*0.5f},
             WithAlpha(g_pido.textActive, animEased), title);
 
-        const char* verBuf  = "v0.1.5";
+        const char* verBuf  = "v0.1.6";
         const char* dateBuf = "release: 03.04.2026";
         ImVec2 szVer  = fReg->CalcTextSizeA(9.f*s, FLT_MAX, 0.f, verBuf);
         ImVec2 szDate = fReg->CalcTextSizeA(9.f*s, FLT_MAX, 0.f, dateBuf);
