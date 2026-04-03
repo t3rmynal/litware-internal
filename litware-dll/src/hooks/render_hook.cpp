@@ -690,6 +690,32 @@ static bool IsFiniteVec3(const Vec3& v){
     return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
 }
 
+static bool IsUsableWorldVec3(const Vec3& v){
+    if(!IsFiniteVec3(v)) return false;
+    if(fabsf(v.x) > 100000.f || fabsf(v.y) > 100000.f || fabsf(v.z) > 100000.f) return false;
+    if(fabsf(v.x) < 0.001f && fabsf(v.y) < 0.001f && fabsf(v.z) < 0.001f) return false;
+    return true;
+}
+
+static Vec3 BuildPawnAimFallback(uintptr_t pawn, const Vec3& fallback){
+    if(IsUsableWorldVec3(fallback)) return fallback;
+
+    Vec3 origin{};
+    uintptr_t scn = Rd<uintptr_t>(pawn + offsets::base_entity::m_pGameSceneNode);
+    if(scn) origin = Rd<Vec3>(scn + offsets::scene_node::m_vecAbsOrigin);
+    if(!IsUsableWorldVec3(origin)) origin = Rd<Vec3>(pawn + offsets::base_pawn::m_vOldOrigin);
+    if(!IsUsableWorldVec3(origin)) return fallback;
+
+    Vec3 viewOff = Rd<Vec3>(pawn + offsets::base_pawn::m_vecViewOffset);
+    if(!IsFiniteVec3(viewOff) || fabsf(viewOff.z) < 1.f || fabsf(viewOff.z) > 128.f){
+        viewOff = {0.f, 0.f, 64.f};
+    }
+
+    Vec3 point = origin + viewOff;
+    if(IsUsableWorldVec3(point)) return point;
+    return {origin.x, origin.y, origin.z + 64.f};
+}
+
 static bool ResolveAimbotPoint(uintptr_t pawn, const Vec3& fallback, Vec3& out){
     static const int kHeadBones[]   = { BONE_HEAD,   BONE_NECK,  BONE_SPINE3, BONE_SPINE2, BONE_PELVIS };
     static const int kNeckBones[]   = { BONE_NECK,   BONE_HEAD,  BONE_SPINE3, BONE_SPINE2, BONE_PELVIS };
@@ -708,17 +734,23 @@ static bool ResolveAimbotPoint(uintptr_t pawn, const Vec3& fallback, Vec3& out){
         default: break;
     }
 
+    Vec3 fallbackPoint = BuildPawnAimFallback(pawn, fallback);
+
     UpdatePawnBones(pawn);
     for(int i = 0; i < boneCount; ++i){
         Vec3 bonePos{};
-        if(GetBonePos(pawn, bones[i], bonePos) && IsFiniteVec3(bonePos)){
+        if(GetBonePos(pawn, bones[i], bonePos) && IsUsableWorldVec3(bonePos)){
+            if(IsUsableWorldVec3(fallbackPoint)){
+                Vec3 delta = bonePos - fallbackPoint;
+                if(delta.length() > 96.f) continue;
+            }
             out = bonePos;
             return true;
         }
     }
 
-    out = fallback;
-    return IsFiniteVec3(out);
+    out = fallbackPoint;
+    return IsUsableWorldVec3(out);
 }
 
 static bool LooksLikeUtf16LE(uintptr_t addr){
