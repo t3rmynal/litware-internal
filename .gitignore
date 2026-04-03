@@ -50,3 +50,4 @@ package-lock.json.bak
 # Nested clones / local tooling (must not be gitlinks in the parent repo)
 cs2-litware-internal/
 .b/
+.toolchains/

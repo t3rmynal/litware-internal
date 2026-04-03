@@ -34,10 +34,12 @@
 #include <chrono>
 #include <random>
 
+#ifdef _MSC_VER
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "Psapi.lib")
 #pragma comment(lib, "winmm.lib")
+#endif
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
 extern HMODULE g_thisModule;
@@ -3467,8 +3469,8 @@ static void DrawMenu(){
         dl->AddText(fBold, tSize, {pos.x + (size.x - szT.x)*0.5f, midH - szT.y*0.5f},
             WithAlpha(g_pido.textActive, animEased), title);
 
-        const char* verBuf  = "v0.1.2";
-        const char* dateBuf = "release: 22.03.2026";
+        const char* verBuf  = "v0.1.3";
+        const char* dateBuf = "release: 03.04.2026";
         ImVec2 szVer  = fReg->CalcTextSizeA(9.f*s, FLT_MAX, 0.f, verBuf);
         ImVec2 szDate = fReg->CalcTextSizeA(9.f*s, FLT_MAX, 0.f, dateBuf);
         float lx = pos.x + 12.f*s;
@@ -5173,7 +5175,7 @@ static void EnsureSceneHooks(){
     }
     void* drawSky = (!g_drawSkyHooked && needSky) ? PatternScan(scene, PAT_SKY, MSK_SKY) : nullptr;
     if(!g_drawSceneHooked){
-        if(drawScene && MH_CreateHook(drawScene, &HookDrawSceneObject, reinterpret_cast<void**>(&g_origDrawSceneObject))==MH_OK){
+        if(drawScene && MH_CreateHook(drawScene, reinterpret_cast<LPVOID>(&HookDrawSceneObject), reinterpret_cast<LPVOID*>(&g_origDrawSceneObject))==MH_OK){
             MH_EnableHook(drawScene);
             g_drawSceneHooked = true;
             DebugLog("[LitWare] draw_scene_object hook ok");
@@ -5186,7 +5188,7 @@ static void EnsureSceneHooks(){
         }
     }
     if(needSky && !g_drawSkyHooked){
-        if(drawSky && MH_CreateHook(drawSky, &HookDrawSkyboxArray, reinterpret_cast<void**>(&g_origDrawSkyboxArray))==MH_OK){
+        if(drawSky && MH_CreateHook(drawSky, reinterpret_cast<LPVOID>(&HookDrawSkyboxArray), reinterpret_cast<LPVOID*>(&g_origDrawSkyboxArray))==MH_OK){
             MH_EnableHook(drawSky);
             g_drawSkyHooked = true;
             DebugLog("[LitWare] draw_skybox_array hook ok");
@@ -5213,7 +5215,7 @@ static void EnsureClientHooks(){
     if(!g_worldFovHooked){
         void* callSite = PatternScan(client, PAT_FOV, MSK_FOV);
         void* fn = ResolveRelative(callSite, 1, 5);
-        if(fn && MH_CreateHook(fn, &HookGetWorldFov, reinterpret_cast<void**>(&g_origGetWorldFov))==MH_OK){
+        if(fn && MH_CreateHook(fn, reinterpret_cast<LPVOID>(&HookGetWorldFov), reinterpret_cast<LPVOID*>(&g_origGetWorldFov))==MH_OK){
             MH_EnableHook(fn);
             g_worldFovHooked = true;
             DebugLog("[LitWare] get_world_fov hook ok");
@@ -5227,7 +5229,7 @@ static void EnsureClientHooks(){
     }
     if(!g_fpLegsHooked){
         void* fn = PatternScan(client, PAT_FP_LEGS, MSK_FP_LEGS);
-        if(fn && MH_CreateHook(fn, &HookFirstPersonLegs, reinterpret_cast<void**>(&g_origFirstPersonLegs))==MH_OK){
+        if(fn && MH_CreateHook(fn, reinterpret_cast<LPVOID>(&HookFirstPersonLegs), reinterpret_cast<LPVOID*>(&g_origFirstPersonLegs))==MH_OK){
             MH_EnableHook(fn);
             g_fpLegsHooked = true;
             DebugLog("[LitWare] fp_legs hook ok");
@@ -5261,7 +5263,7 @@ bool Initialize(){
         DebugLog("[LitWare] MH_Initialize failed: %d", (int)mh);
         return false;
     }
-    if(MH_CreateHook(presentAddr,&HookPresent,reinterpret_cast<void**>(&g_originalPresent))!=MH_OK){
+    if(MH_CreateHook(presentAddr, reinterpret_cast<LPVOID>(&HookPresent), reinterpret_cast<LPVOID*>(&g_originalPresent))!=MH_OK){
         DebugLog("[LitWare] MH_CreateHook failed");MH_Uninitialize();return false;
     }
     if(MH_EnableHook(presentAddr)!=MH_OK){

@@ -90,13 +90,5 @@
     <ClInclude Include="src\core\esp_data.h" />
     <ClInclude Include="src\Fonts.h" />
   </ItemGroup>
-  <ItemGroup>
-    <None Include="..\icons\CS2GunIcons.ttf">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-  </ItemGroup>
-  <Target Name="CopyIcons" AfterTargets="Build">
-    <Copy SourceFiles="$(ProjectDir)..\icons\CS2GunIcons.ttf" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
-  </Target>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>
