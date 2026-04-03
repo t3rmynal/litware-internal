@@ -1,0 +1,45 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  windows-msbuild:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build DLL
+        run: msbuild litware-dll/litware-dll.vcxproj /p:Configuration=Release /p:Platform=x64 /m
+
+      - name: Write SHA256
+        shell: pwsh
+        run: |
+          $dll = "litware-dll/bin/Release/litware-dll.dll"
+          $hash = (Get-FileHash $dll -Algorithm SHA256).Hash.ToLower()
+          "$hash *litware-dll.dll" | Set-Content "litware-dll/bin/Release/litware-dll.dll.sha256" -NoNewline
+
+      - name: Upload DLL artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: litware-dll-windows-release
+          path: |
+            litware-dll/bin/Release/litware-dll.dll
+            litware-dll/bin/Release/litware-dll.dll.sha256
