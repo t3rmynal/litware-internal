@@ -21,7 +21,6 @@
     typedef int            BOOL;
     typedef void*          LPVOID;
     typedef void*          HANDLE;
-    typedef unsigned short wchar_t;
     typedef signed char    CHAR;
     typedef char*          PCHAR;
     typedef unsigned char* PUCHAR;
@@ -34,7 +33,9 @@
 
     #define FALSE          0
     #define TRUE           1
+    #ifndef NULL
     #define NULL           nullptr
+    #endif
     #define VOID           void
 
     #define MAX_PATH       4096

@@ -99,20 +99,23 @@ public:
     uintptr_t GetModuleBase(const std::string& soname) {
         std::lock_guard<std::mutex> lock(mutex);
 
-        if (cache.empty()) {
-            ParseProcMaps();
-        }
+        // Try up to 2 passes: cached first, then refresh if miss
+        for (int pass = 0; pass < 2; ++pass) {
+            if (cache.empty() || pass == 1) {
+                ParseProcMaps();
+            }
 
-        // Try exact match first
-        auto it = cache.find(soname);
-        if (it != cache.end()) {
-            return it->second.base;
-        }
+            // Try exact match first
+            auto it = cache.find(soname);
+            if (it != cache.end()) {
+                return it->second.base;
+            }
 
-        // Try partial match (e.g., "libclient" matches "libclient.so.x")
-        for (const auto& [name, info] : cache) {
-            if (name.find(soname) != std::string::npos) {
-                return info.base;
+            // Try partial match (e.g., "libclient" matches "libclient.so.x")
+            for (const auto& [name, info] : cache) {
+                if (name.find(soname) != std::string::npos) {
+                    return info.base;
+                }
             }
         }
 
@@ -122,23 +125,24 @@ public:
     bool GetModuleInfo(const std::string& soname, uintptr_t& base, size_t& size) {
         std::lock_guard<std::mutex> lock(mutex);
 
-        if (cache.empty()) {
-            ParseProcMaps();
-        }
+        for (int pass = 0; pass < 2; ++pass) {
+            if (cache.empty() || pass == 1) {
+                ParseProcMaps();
+            }
 
-        auto it = cache.find(soname);
-        if (it != cache.end()) {
-            base = it->second.base;
-            size = it->second.size;
-            return true;
-        }
-
-        // Try partial match
-        for (const auto& [name, info] : cache) {
-            if (name.find(soname) != std::string::npos) {
-                base = info.base;
-                size = info.size;
+            auto it = cache.find(soname);
+            if (it != cache.end()) {
+                base = it->second.base;
+                size = it->second.size;
                 return true;
+            }
+
+            for (const auto& [name, info] : cache) {
+                if (name.find(soname) != std::string::npos) {
+                    base = info.base;
+                    size = info.size;
+                    return true;
+                }
             }
         }
 
@@ -151,18 +155,21 @@ public:
     }
 };
 
-// Global cache instance
-static ModuleCache g_cache;
+// Global cache instance (Meyer's singleton — one instance across all TUs)
+inline ModuleCache& g_cache() {
+    static ModuleCache instance;
+    return instance;
+}
 
 // Public API
 inline uintptr_t get_module_base(const char* soname) {
     if (!soname) return 0;
-    return g_cache.GetModuleBase(soname);
+    return g_cache().GetModuleBase(soname);
 }
 
 inline bool get_module_info(const char* soname, uintptr_t& base, size_t& size) {
     if (!soname) return false;
-    return g_cache.GetModuleInfo(soname, base, size);
+    return g_cache().GetModuleInfo(soname, base, size);
 }
 
 // === Module Name Translation (Windows .dll → Linux .so) ===

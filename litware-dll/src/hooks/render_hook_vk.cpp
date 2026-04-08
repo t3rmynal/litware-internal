@@ -37,6 +37,12 @@ using PFN_vkCreateFence = VkResult(VKAPI_PTR*)(VkDevice, const VkFenceCreateInfo
 using PFN_vkWaitForFences = VkResult(VKAPI_PTR*)(VkDevice, uint32_t, const VkFence*, VkBool32, uint64_t);
 using PFN_vkResetFences = VkResult(VKAPI_PTR*)(VkDevice, uint32_t, const VkFence*);
 using PFN_vkDeviceWaitIdle = VkResult(VKAPI_PTR*)(VkDevice);
+using PFN_vkDestroyRenderPass = void(VKAPI_PTR*)(VkDevice, VkRenderPass, const VkAllocationCallbacks*);
+using PFN_vkDestroyDescriptorPool = void(VKAPI_PTR*)(VkDevice, VkDescriptorPool, const VkAllocationCallbacks*);
+using PFN_vkDestroyCommandPool = void(VKAPI_PTR*)(VkDevice, VkCommandPool, const VkAllocationCallbacks*);
+using PFN_vkDestroyFence = void(VKAPI_PTR*)(VkDevice, VkFence, const VkAllocationCallbacks*);
+using PFN_vkDestroyFramebuffer = void(VKAPI_PTR*)(VkDevice, VkFramebuffer, const VkAllocationCallbacks*);
+using PFN_vkDestroyImageView = void(VKAPI_PTR*)(VkDevice, VkImageView, const VkAllocationCallbacks*);
 
 // Function pointers
 static PFN_vkQueuePresentKHR g_vkQueuePresentKHR = nullptr;
@@ -58,6 +64,12 @@ static PFN_vkCreateFence g_vkCreateFence = nullptr;
 static PFN_vkWaitForFences g_vkWaitForFences = nullptr;
 static PFN_vkResetFences g_vkResetFences = nullptr;
 static PFN_vkDeviceWaitIdle g_vkDeviceWaitIdle = nullptr;
+static PFN_vkDestroyRenderPass g_vkDestroyRenderPass = nullptr;
+static PFN_vkDestroyDescriptorPool g_vkDestroyDescriptorPool = nullptr;
+static PFN_vkDestroyCommandPool g_vkDestroyCommandPool = nullptr;
+static PFN_vkDestroyFence g_vkDestroyFence = nullptr;
+static PFN_vkDestroyFramebuffer g_vkDestroyFramebuffer = nullptr;
+static PFN_vkDestroyImageView g_vkDestroyImageView = nullptr;
 
 // Original function pointers
 static PFN_vkQueuePresentKHR g_originalQueuePresent = nullptr;
@@ -184,7 +196,11 @@ static VkResult VKAPI_PTR HookQueuePresent(VkQueue queue, const VkPresentInfoKHR
 
 // === Init/Shutdown ===
 static void LoadVulkanFunctions() {
-    void* vulkan = dlopen("libvulkan.so.1", RTLD_NOLOAD | RTLD_NOW);
+    void* vulkan = dlopen("libvulkan.so.1", RTLD_LAZY);
+    if (!vulkan) {
+        // Try alternate path
+        vulkan = dlopen("libvulkan.so", RTLD_LAZY);
+    }
     if (!vulkan) {
         BootstrapLog("[litware] Could not load libvulkan.so.1");
         return;
@@ -212,6 +228,12 @@ static void LoadVulkanFunctions() {
     LOAD_VK_FUNC(vkWaitForFences);
     LOAD_VK_FUNC(vkResetFences);
     LOAD_VK_FUNC(vkDeviceWaitIdle);
+    LOAD_VK_FUNC(vkDestroyRenderPass);
+    LOAD_VK_FUNC(vkDestroyDescriptorPool);
+    LOAD_VK_FUNC(vkDestroyCommandPool);
+    LOAD_VK_FUNC(vkDestroyFence);
+    LOAD_VK_FUNC(vkDestroyFramebuffer);
+    LOAD_VK_FUNC(vkDestroyImageView);
 
 #undef LOAD_VK_FUNC
 
@@ -219,9 +241,13 @@ static void LoadVulkanFunctions() {
 }
 
 static void LoadSDL2Functions() {
-    void* sdl = dlopen("libSDL2-2.0.so.0", RTLD_NOLOAD | RTLD_NOW);
+    void* sdl = dlopen("libSDL2-2.0.so.0", RTLD_LAZY);
     if (!sdl) {
-        BootstrapLog("[litware] Could not load libSDL2-2.0.so.0");
+        // Try alternate paths
+        sdl = dlopen("libSDL2.so", RTLD_LAZY);
+    }
+    if (!sdl) {
+        BootstrapLog("[litware] Could not load libSDL2 - will try later");
         return;
     }
 
@@ -229,11 +255,13 @@ static void LoadSDL2Functions() {
     void* poll_event_addr = dlsym(sdl, "SDL_PollEvent");
 
     if (create_window_addr && poll_event_addr) {
-        lhook::create(create_window_addr, (void*)&HookSDLCreateWindow, (void**)&g_origSDLCreateWindow);
-        lhook::create(poll_event_addr, (void*)&HookSDLPollEvent, (void**)&g_origSDLPollEvent);
-        lhook::enable(create_window_addr);
-        lhook::enable(poll_event_addr);
+        lhook::Status st1 = lhook::create(create_window_addr, (void*)&HookSDLCreateWindow, (void**)&g_origSDLCreateWindow);
+        lhook::Status st2 = lhook::create(poll_event_addr, (void*)&HookSDLPollEvent, (void**)&g_origSDLPollEvent);
+        if (st1 == lhook::OK) lhook::enable(create_window_addr);
+        if (st2 == lhook::OK) lhook::enable(poll_event_addr);
         BootstrapLog("[litware] SDL2 hooks installed");
+    } else {
+        BootstrapLog("[litware] SDL2 symbols not found");
     }
 }
 
@@ -246,14 +274,19 @@ bool Initialize() {
     BootstrapLog("[litware] render_hook::Initialize (Vulkan)");
 
     LoadVulkanFunctions();
+    BootstrapLog("[litware] Vulkan functions: present=%p, create=%p", (void*)g_vkQueuePresentKHR, (void*)g_vkCreateDevice);
+
+    BootstrapLog("[litware] About to load SDL2...");
     LoadSDL2Functions();
+    BootstrapLog("[litware] SDL2 functions loaded");
 
     if (!g_vkQueuePresentKHR) {
-        BootstrapLog("[litware] vkQueuePresentKHR not loaded");
+        BootstrapLog("[litware] vkQueuePresentKHR not loaded - aborting");
         return false;
     }
 
     // Install Vulkan hook
+    BootstrapLog("[litware] Creating hook for vkQueuePresentKHR at %p", g_vkQueuePresentKHR);
     lhook::Status st = lhook::create(
         (void*)g_vkQueuePresentKHR,
         (void*)&HookQueuePresent,
@@ -261,13 +294,15 @@ bool Initialize() {
     );
 
     if (st != lhook::OK) {
-        BootstrapLog("[litware] Failed to hook vkQueuePresentKHR: %d", (int)st);
+        BootstrapLog("[litware] Failed to hook vkQueuePresentKHR: status=%d", (int)st);
         return false;
     }
 
+    BootstrapLog("[litware] Enabling vkQueuePresentKHR hook");
     lhook::enable((void*)g_vkQueuePresentKHR);
 
     if (g_vkCreateDevice) {
+        BootstrapLog("[litware] Creating hook for vkCreateDevice");
         lhook::create(
             (void*)g_vkCreateDevice,
             (void*)&HookCreateDevice,
@@ -437,14 +472,12 @@ static void InitImGuiVk(VkQueue queue, VkSwapchainKHR swapchain) {
     init_info.Queue = g_vkQueue;
     init_info.PipelineCache = VK_NULL_HANDLE;
     init_info.DescriptorPool = g_descriptorPool;
-    init_info.Subpass = 0;
     init_info.MinImageCount = imageCount;
     init_info.ImageCount = imageCount;
-    init_info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
     init_info.Allocator = nullptr;
     init_info.CheckVkResultFn = nullptr;
 
-    if (!ImGui_ImplVulkan_Init(&init_info, g_renderPass)) {
+    if (!ImGui_ImplVulkan_Init(&init_info)) {
         BootstrapLog("[litware] ImGui_ImplVulkan_Init failed");
         return;
     }
@@ -481,13 +514,13 @@ static void RenderFrameVk(uint32_t imageIndex) {
     ImGui_ImplSDL2_NewFrame();
     ImGui::NewFrame();
 
-    // Toggle menu on INSERT
-    if ((GetAsyncKeyState(VK_INSERT) & 0x8000) && !g_menuOpen) {
+    // Toggle menu on INSERT (one-shot to avoid rapid toggling)
+    if (linput::IsKeyPressed(VK_INSERT)) {
         g_menuOpen = !g_menuOpen;
     }
 
-    // Trigger unload on END
-    if (GetAsyncKeyState(VK_END) & 0x8000) {
+    // Trigger unload on END (one-shot)
+    if (linput::IsKeyPressed(VK_END)) {
         g_pendingUnload = true;
     }
 
@@ -516,12 +549,18 @@ static void RenderFrameVk(uint32_t imageIndex) {
         begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         g_vkBeginCommandBuffer(g_cmdBuffers[imageIndex], &begin_info);
 
+        // Query actual window size for correct render area
+        int win_w = 800, win_h = 600;
+        if (g_sdlWindow) {
+            SDL_GetWindowSize(g_sdlWindow, &win_w, &win_h);
+        }
+
         VkClearValue clear_value = {{0.0f, 0.0f, 0.0f, 1.0f}};
         VkRenderPassBeginInfo rp_info{};
         rp_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
         rp_info.renderPass = g_renderPass;
         rp_info.framebuffer = g_framebuffers[imageIndex];
-        rp_info.renderArea.extent = {800, 600};  // Placeholder
+        rp_info.renderArea.extent = {(uint32_t)win_w, (uint32_t)win_h};
         rp_info.clearValueCount = 1;
         rp_info.pClearValues = &clear_value;
 

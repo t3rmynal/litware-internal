@@ -2,18 +2,22 @@
 #include "bypass.h"
 #include "hooks/render_hook.h"
 #include "debug.h"
-#include <Windows.h>
+#include "platform/compat.h"
+#include "platform/linux/proc_maps.h"
 
 void entry() {
     BootstrapLog("[litware] entry() start");
     DebugLog("[litware] entry() start");
 
-    // ждём оверлей
+    // On Linux, skip overlay wait and proceed directly
+    #ifndef __linux__
+    // Wait for overlay on Windows
     for (int i = 0; i < 50; ++i) {
         if (GetModuleHandleA("gameoverlayrenderer64.dll") != nullptr)
             break;
         Sleep(200);
     }
+    #endif
 
     if (!bypass::Initialize()) {
         BootstrapLog("[litware] bypass::Initialize failed (non-fatal)");

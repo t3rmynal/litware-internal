@@ -128,10 +128,33 @@ public:
             memcpy(original_bytes, target, copy_size);
         }
 
-        // Allocate trampoline page (executable)
-        void* trampoline = mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC,
-                                MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        // Allocate trampoline near target (within ±2GB for rel32 jmp)
+        // Try addresses near the target in 64MB increments
+        void* trampoline = MAP_FAILED;
+        uintptr_t target_addr = (uintptr_t)target;
+        for (int i = 1; i <= 32 && trampoline == MAP_FAILED; ++i) {
+            uintptr_t hint_above = target_addr + (uintptr_t)i * 64 * 1024 * 1024;
+            uintptr_t hint_below = target_addr - (uintptr_t)i * 64 * 1024 * 1024;
+            trampoline = mmap((void*)hint_above, 4096, PROT_READ | PROT_WRITE | PROT_EXEC,
+                              MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            if (trampoline == MAP_FAILED) {
+                trampoline = mmap((void*)hint_below, 4096, PROT_READ | PROT_WRITE | PROT_EXEC,
+                                  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            }
+        }
+        // Fallback: anywhere (may fail if >2GB away - detected below)
+        if (trampoline == MAP_FAILED) {
+            trampoline = mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC,
+                              MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        }
         if (!trampoline || trampoline == MAP_FAILED) {
+            return ALLOC_FAIL;
+        }
+
+        // Verify trampoline is within ±2GB of target for rel32
+        intptr_t dist = (intptr_t)trampoline - (intptr_t)target;
+        if (dist > 0x7FFFFFFF || dist < -0x7FFFFFFF) {
+            munmap(trampoline, 4096);
             return ALLOC_FAIL;
         }
 

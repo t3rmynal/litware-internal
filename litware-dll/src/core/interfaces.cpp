@@ -1,6 +1,7 @@
 #include "interfaces.h"
 #include "offsets.h"
-#include <Psapi.h>
+#include "../platform/compat.h"
+#include "../platform/linux/proc_maps.h"
 
 namespace interfaces {
     uintptr_t client = 0;

@@ -1,6 +1,6 @@
 #pragma once
 #include <cstdint>
-#include <Windows.h>
+#include "../platform/compat.h"
 
 namespace interfaces {
     extern uintptr_t client;

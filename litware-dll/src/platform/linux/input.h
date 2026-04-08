@@ -48,7 +48,10 @@ public:
     }
 };
 
-static KeyState g_key_state;
+inline KeyState& g_key_state() {
+    static KeyState instance;
+    return instance;
+}
 
 // SDL Scancode to Win32 VK mapping
 inline int SdlScancodeToVk(SDL_Scancode sc) {
@@ -128,22 +131,22 @@ inline int SdlScancodeToVk(SDL_Scancode sc) {
         case SDL_SCANCODE_LALT:     return 0xA4; // VK_LMENU
         case SDL_SCANCODE_RALT:     return 0xA5; // VK_RMENU
 
-        case SDL_SCANCODE_NUMPAD0: return 0x60; // VK_NUMPAD0
-        case SDL_SCANCODE_NUMPAD1: return 0x61; // VK_NUMPAD1
-        case SDL_SCANCODE_NUMPAD2: return 0x62; // VK_NUMPAD2
-        case SDL_SCANCODE_NUMPAD3: return 0x63; // VK_NUMPAD3
-        case SDL_SCANCODE_NUMPAD4: return 0x64; // VK_NUMPAD4
-        case SDL_SCANCODE_NUMPAD5: return 0x65; // VK_NUMPAD5
-        case SDL_SCANCODE_NUMPAD6: return 0x66; // VK_NUMPAD6
-        case SDL_SCANCODE_NUMPAD7: return 0x67; // VK_NUMPAD7
-        case SDL_SCANCODE_NUMPAD8: return 0x68; // VK_NUMPAD8
-        case SDL_SCANCODE_NUMPAD9: return 0x69; // VK_NUMPAD9
+        case SDL_SCANCODE_KP_0: return 0x60; // VK_NUMPAD0
+        case SDL_SCANCODE_KP_1: return 0x61; // VK_NUMPAD1
+        case SDL_SCANCODE_KP_2: return 0x62; // VK_NUMPAD2
+        case SDL_SCANCODE_KP_3: return 0x63; // VK_NUMPAD3
+        case SDL_SCANCODE_KP_4: return 0x64; // VK_NUMPAD4
+        case SDL_SCANCODE_KP_5: return 0x65; // VK_NUMPAD5
+        case SDL_SCANCODE_KP_6: return 0x66; // VK_NUMPAD6
+        case SDL_SCANCODE_KP_7: return 0x67; // VK_NUMPAD7
+        case SDL_SCANCODE_KP_8: return 0x68; // VK_NUMPAD8
+        case SDL_SCANCODE_KP_9: return 0x69; // VK_NUMPAD9
 
-        case SDL_SCANCODE_NUMPADMULTIPLY: return 0x6A; // VK_MULTIPLY
-        case SDL_SCANCODE_NUMPADADD:      return 0x6B; // VK_ADD
-        case SDL_SCANCODE_NUMPADSUBTRACT: return 0x6D; // VK_SUBTRACT
-        case SDL_SCANCODE_NUMPADDECIMAL:  return 0x6E; // VK_DECIMAL
-        case SDL_SCANCODE_NUMPADDIVIDE:   return 0x6F; // VK_DIVIDE
+        case SDL_SCANCODE_KP_MULTIPLY: return 0x6A; // VK_MULTIPLY
+        case SDL_SCANCODE_KP_PLUS:     return 0x6B; // VK_ADD
+        case SDL_SCANCODE_KP_MINUS:    return 0x6D; // VK_SUBTRACT
+        case SDL_SCANCODE_KP_PERIOD:   return 0x6E; // VK_DECIMAL
+        case SDL_SCANCODE_KP_DIVIDE:   return 0x6F; // VK_DIVIDE
 
         case SDL_SCANCODE_CAPSLOCK:  return 0x14; // VK_CAPITAL
         case SDL_SCANCODE_NUMLOCKCLEAR: return 0x90; // VK_NUMLOCK
@@ -171,25 +174,25 @@ inline void OnSdlEvent(const SDL_Event& ev) {
         case SDL_KEYDOWN:
             if (!ev.key.repeat) {
                 int vk = SdlScancodeToVk(ev.key.keysym.scancode);
-                if (vk) g_key_state.OnKeyDown(vk);
+                if (vk) g_key_state().OnKeyDown(vk);
             }
             break;
 
         case SDL_KEYUP: {
             int vk = SdlScancodeToVk(ev.key.keysym.scancode);
-            if (vk) g_key_state.OnKeyUp(vk);
+            if (vk) g_key_state().OnKeyUp(vk);
             break;
         }
 
         case SDL_MOUSEBUTTONDOWN: {
             int vk = SdlButtonToVk(ev.button.button);
-            if (vk) g_key_state.OnKeyDown(vk);
+            if (vk) g_key_state().OnKeyDown(vk);
             break;
         }
 
         case SDL_MOUSEBUTTONUP: {
             int vk = SdlButtonToVk(ev.button.button);
-            if (vk) g_key_state.OnKeyUp(vk);
+            if (vk) g_key_state().OnKeyUp(vk);
             break;
         }
 
@@ -201,12 +204,12 @@ inline void OnSdlEvent(const SDL_Event& ev) {
 // Get key state (matches Windows GetAsyncKeyState return value)
 // Returns 0x8000 if key is down, 0 if up
 inline int GetAsyncKeyState(int vk) {
-    return g_key_state.IsKeyDown(vk) ? 0x8000 : 0;
+    return g_key_state().IsKeyDown(vk) ? 0x8000 : 0;
 }
 
 // Check if key was pressed (one-time per poll)
 inline bool IsKeyPressed(int vk) {
-    return g_key_state.IsKeyPressed(vk);
+    return g_key_state().IsKeyPressed(vk);
 }
 
 } // namespace linput
